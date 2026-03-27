@@ -359,3 +359,207 @@ func TestClassify_WithActiveWorkspace(t *testing.T) {
 	_ = action
 	_ = fmt.Sprintf("action: %+v", action) // verify it doesn't panic
 }
+
+func TestClassify_UsesCachedModels(t *testing.T) {
+	// Set up model configs in the store so the cache loads them
+	mt := newModelTracker()
+	mt.respond["cached/primary"] = Action{
+		Type:       ActionDirectAnswer,
+		Content:    "from cached model",
+		Confidence: 0.95,
+		Reasoning:  "cached",
+	}
+
+	srv := httptest.NewServer(mt.handler())
+	defer srv.Close()
+
+	router := NewRouter("test-key").WithBaseURL(srv.URL)
+	st := newTestStore(t)
+
+	// Seed model configs pointing to "cached/primary" and "cached/second"
+	if err := st.SetModelConfig(context.Background(), store.ModelConfig{
+		Role:     "router",
+		Provider: "https://openrouter.ai/api/v1",
+		Model:    "cached/primary",
+		Metadata: `{"threshold": 0.8}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetModelConfig(context.Background(), store.ModelConfig{
+		Role:     "second_opinion",
+		Provider: "https://openrouter.ai/api/v1",
+		Model:    "cached/second",
+		Metadata: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Constructor uses different model names, but cache should override
+	orch := NewOrchestrator(router, st, "constructor/primary", "constructor/second")
+
+	action, err := orch.Classify(context.Background(), core.InboundMessage{
+		SenderID: "user1",
+		Channel:  "telegram",
+		Content:  "hello",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if action.Content != "from cached model" {
+		t.Errorf("expected cached model response, got %q", action.Content)
+	}
+
+	// Verify the cached model was called, not the constructor model
+	called := mt.calledModels()
+	if len(called) != 1 || called[0] != "cached/primary" {
+		t.Errorf("expected call to 'cached/primary', got %v", called)
+	}
+}
+
+func TestSeedDefaults(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	if err := SeedDefaults(ctx, st); err != nil {
+		t.Fatalf("SeedDefaults: %v", err)
+	}
+
+	configs, err := st.ListModelConfigs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configs) != 2 {
+		t.Fatalf("expected 2 default configs, got %d", len(configs))
+	}
+}
+
+func TestSeedDefaults_Idempotent(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	// Seed custom config first
+	if err := st.SetModelConfig(ctx, store.ModelConfig{
+		Role:     "router",
+		Provider: "custom",
+		Model:    "custom/model",
+		Metadata: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SeedDefaults should not overwrite
+	if err := SeedDefaults(ctx, st); err != nil {
+		t.Fatalf("SeedDefaults: %v", err)
+	}
+
+	cfg, err := st.GetModelConfig(ctx, "router")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "custom/model" {
+		t.Errorf("model = %q, want 'custom/model' (seed should not overwrite)", cfg.Model)
+	}
+}
+
+func TestThresholdFromMetadata(t *testing.T) {
+	mt := newModelTracker()
+	mt.respond["cached/primary"] = Action{
+		Type:       ActionAgentTask,
+		Content:    "task",
+		Confidence: 0.55,
+		Reasoning:  "moderate",
+	}
+	mt.respond["cached/second"] = Action{
+		Type:       ActionAgentTask,
+		Content:    "task2",
+		Confidence: 0.6,
+		Reasoning:  "slightly better",
+	}
+
+	srv := httptest.NewServer(mt.handler())
+	defer srv.Close()
+
+	router := NewRouter("test-key").WithBaseURL(srv.URL)
+	st := newTestStore(t)
+
+	// Set threshold to 0.5 via metadata
+	if err := st.SetModelConfig(context.Background(), store.ModelConfig{
+		Role:     "router",
+		Provider: "https://openrouter.ai/api/v1",
+		Model:    "cached/primary",
+		Metadata: `{"threshold": 0.5}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetModelConfig(context.Background(), store.ModelConfig{
+		Role:     "second_opinion",
+		Provider: "https://openrouter.ai/api/v1",
+		Model:    "cached/second",
+		Metadata: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	orch := NewOrchestrator(router, st, "fallback/primary", "fallback/second")
+
+	_, err := orch.Classify(context.Background(), core.InboundMessage{
+		SenderID: "user1",
+		Channel:  "telegram",
+		Content:  "do work",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// With threshold 0.5 and confidence 0.55, second opinion should NOT be triggered
+	called := mt.calledModels()
+	if len(called) != 1 {
+		t.Errorf("expected 1 call with cached threshold 0.5, got %d: %v", len(called), called)
+	}
+}
+
+func TestCacheIsStale(t *testing.T) {
+	cache := newModelCache(0) // TTL of 0 means always stale
+	if !cache.isStale() {
+		t.Error("new cache should be stale")
+	}
+
+	cache.refresh([]store.ModelConfig{
+		{Role: "router", Model: "test"},
+	})
+
+	// With TTL of 0, cache is immediately stale again
+	if !cache.isStale() {
+		t.Error("cache with 0 TTL should always be stale after refresh")
+	}
+}
+
+func TestCacheRefresh(t *testing.T) {
+	cache := newModelCache(defaultCacheTTL)
+
+	cache.refresh([]store.ModelConfig{
+		{Role: "router", Model: "model-a"},
+		{Role: "second_opinion", Model: "model-b"},
+	})
+
+	cfg, ok := cache.get("router")
+	if !ok {
+		t.Fatal("expected router config in cache")
+	}
+	if cfg.Model != "model-a" {
+		t.Errorf("model = %q, want 'model-a'", cfg.Model)
+	}
+
+	cfg, ok = cache.get("second_opinion")
+	if !ok {
+		t.Fatal("expected second_opinion config in cache")
+	}
+	if cfg.Model != "model-b" {
+		t.Errorf("model = %q, want 'model-b'", cfg.Model)
+	}
+
+	_, ok = cache.get("nonexistent")
+	if ok {
+		t.Error("should not find nonexistent role")
+	}
+}

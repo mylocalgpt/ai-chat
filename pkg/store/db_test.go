@@ -24,7 +24,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 		t.Fatalf("Migrate failed: %v", err)
 	}
 
-	tables := []string{"workspaces", "messages", "sessions", "user_context", "_meta"}
+	tables := []string{"workspaces", "messages", "sessions", "user_context", "model_config", "_meta"}
 	for _, table := range tables {
 		var name string
 		err := db.QueryRow(
@@ -50,13 +50,13 @@ func TestMigrateIdempotent(t *testing.T) {
 		t.Fatalf("second Migrate failed: %v", err)
 	}
 
-	// Verify version is still 1.
+	// Verify version matches total migration count.
 	ver, err := schemaVersion(db)
 	if err != nil {
 		t.Fatalf("reading schema version: %v", err)
 	}
-	if ver != 1 {
-		t.Errorf("schema_version = %d, want 1", ver)
+	if ver != len(migrations) {
+		t.Errorf("schema_version = %d, want %d", ver, len(migrations))
 	}
 }
 

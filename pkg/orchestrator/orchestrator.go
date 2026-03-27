@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,14 +18,16 @@ const defaultThreshold = 0.7
 type Orchestrator struct {
 	router       *Router
 	store        *store.Store
-	primaryModel string
-	secondModel  string
+	primaryModel string // fallback default until cache loads
+	secondModel  string // fallback default until cache loads
 	threshold    float64
+	cache        *modelCache
 }
 
 // NewOrchestrator creates an Orchestrator with the given router and store.
 // The router should be pre-configured with the OpenRouter API key.
-// primaryModel and secondModel are OpenRouter model identifiers.
+// primaryModel and secondModel are OpenRouter model identifiers used as
+// fallback defaults until the first successful cache load from the database.
 func NewOrchestrator(router *Router, st *store.Store, primaryModel, secondModel string) *Orchestrator {
 	return &Orchestrator{
 		router:       router,
@@ -32,6 +35,7 @@ func NewOrchestrator(router *Router, st *store.Store, primaryModel, secondModel 
 		primaryModel: primaryModel,
 		secondModel:  secondModel,
 		threshold:    defaultThreshold,
+		cache:        newModelCache(defaultCacheTTL),
 	}
 }
 
@@ -44,6 +48,10 @@ func (o *Orchestrator) WithThreshold(f float64) *Orchestrator {
 
 // Classify determines what action to take for an inbound message.
 func (o *Orchestrator) Classify(ctx context.Context, msg core.InboundMessage) (Action, error) {
+	o.refreshCacheIfStale(ctx)
+
+	primaryModel, secondModel, threshold := o.resolveModels()
+
 	userCtx, err := o.loadUserContext(ctx, msg)
 	if err != nil {
 		return Action{}, fmt.Errorf("orchestrator: %w", err)
@@ -54,16 +62,16 @@ func (o *Orchestrator) Classify(ctx context.Context, msg core.InboundMessage) (A
 		return Action{}, fmt.Errorf("orchestrator: listing workspaces: %w", err)
 	}
 
-	primary, err := classifyIntent(ctx, o.router, o.primaryModel, msg, userCtx, workspaces)
+	primary, err := classifyIntent(ctx, o.router, primaryModel, msg, userCtx, workspaces)
 	if err != nil {
 		return Action{}, fmt.Errorf("orchestrator: primary classification: %w", err)
 	}
 
-	if primary.Confidence >= o.threshold {
+	if primary.Confidence >= threshold {
 		return primary, nil
 	}
 
-	second, err := classifyIntent(ctx, o.router, o.secondModel, msg, userCtx, workspaces)
+	second, err := classifyIntent(ctx, o.router, secondModel, msg, userCtx, workspaces)
 	if err != nil {
 		slog.Warn("second opinion failed", "error", err)
 		return primary, nil
@@ -73,6 +81,60 @@ func (o *Orchestrator) Classify(ctx context.Context, msg core.InboundMessage) (A
 		return second, nil
 	}
 	return primary, nil
+}
+
+// refreshCacheIfStale reloads model configs from the store if the cache TTL
+// has elapsed. On failure, the stale cache is kept.
+func (o *Orchestrator) refreshCacheIfStale(ctx context.Context) {
+	if !o.cache.isStale() {
+		return
+	}
+	configs, err := o.store.ListModelConfigs(ctx)
+	if err != nil {
+		slog.Warn("model cache refresh failed", "error", err)
+		return
+	}
+	o.cache.refresh(configs)
+}
+
+// resolveModels returns the primary model, second model, and threshold to use.
+// Values come from the cache if available, otherwise from the constructor defaults.
+func (o *Orchestrator) resolveModels() (primary, second string, threshold float64) {
+	primary = o.primaryModel
+	second = o.secondModel
+	threshold = o.threshold
+
+	if cfg, ok := o.cache.get("router"); ok {
+		primary = cfg.Model
+		if t, ok := extractThreshold(cfg.Metadata); ok {
+			threshold = t
+		}
+	}
+	if cfg, ok := o.cache.get("second_opinion"); ok {
+		second = cfg.Model
+	}
+
+	return primary, second, threshold
+}
+
+// extractThreshold parses the threshold value from a metadata JSON string.
+func extractThreshold(metadata string) (float64, bool) {
+	if metadata == "" || metadata == "{}" {
+		return 0, false
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(metadata), &m); err != nil {
+		return 0, false
+	}
+	v, ok := m["threshold"]
+	if !ok {
+		return 0, false
+	}
+	f, ok := v.(float64)
+	if !ok {
+		return 0, false
+	}
+	return f, true
 }
 
 // loadUserContext resolves the user's active workspace from the store into a

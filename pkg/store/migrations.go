@@ -10,6 +10,7 @@ import (
 // Each runs in its own transaction. Append new migrations to the end.
 var migrations = []func(*sql.Tx) error{
 	migration001,
+	migration002,
 }
 
 // Migrate runs all pending migrations against the database.
@@ -127,4 +128,16 @@ func migration001(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// migration002 creates the model_config table for runtime model configuration.
+func migration002(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE model_config (
+		role TEXT PRIMARY KEY,
+		provider TEXT NOT NULL,
+		model TEXT NOT NULL,
+		metadata TEXT DEFAULT '{}',
+		updated_at TEXT DEFAULT (datetime('now'))
+	)`)
+	return err
 }
