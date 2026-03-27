@@ -106,6 +106,11 @@ func (t *TelegramAdapter) Start(ctx context.Context) error {
 	go t.bot.Start(childCtx)
 
 	slog.Info("telegram bot started", "username", me.Username)
+
+	if err := t.SyncCommands(ctx); err != nil {
+		slog.Error("failed to sync telegram commands on startup", "error", err)
+	}
+
 	return nil
 }
 
