@@ -19,7 +19,7 @@ func main() {
 	case "stdio":
 		runStdio()
 	case "audit":
-		runAudit()
+		runAudit(os.Args[2:])
 	case "version":
 		fmt.Println("ai-chat", version)
 	default:
