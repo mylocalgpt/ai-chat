@@ -32,6 +32,7 @@ type MCPStore interface {
 // Executor defines the executor operations the MCP server needs.
 type Executor interface {
 	KillSession(ctx context.Context, workspaceID int64, agent string) error
+	SpawnSession(ctx context.Context, ws core.Workspace, agent string) error
 	Execute(ctx context.Context, ws core.Workspace, agent, message string) (string, error)
 }
 

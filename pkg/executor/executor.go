@@ -179,6 +179,39 @@ func (e *Executor) validateSession(ctx context.Context, log *slog.Logger, sess *
 	return sess
 }
 
+// SpawnSession creates a new tmux session and agent process for the given
+// workspace without sending a message. Used by MCP session_restart.
+func (e *Executor) SpawnSession(ctx context.Context, ws core.Workspace, agent string) error {
+	if ws.Host != "" {
+		return ErrRemoteNotSupported
+	}
+
+	sessionName := SessionName(ws.Name, agent)
+
+	if err := e.tmux.NewSession(sessionName, ws.Path); err != nil {
+		return fmt.Errorf("executor: create tmux session: %w", err)
+	}
+
+	harness, err := e.registry.GetTmux(agent)
+	if err != nil {
+		_ = e.tmux.KillSession(sessionName)
+		return fmt.Errorf("executor: %w", err)
+	}
+
+	if err := harness.Spawn(ctx, sessionName); err != nil {
+		_ = e.tmux.KillSession(sessionName)
+		return fmt.Errorf("executor: spawn agent: %w", err)
+	}
+
+	_, err = e.store.CreateSession(ctx, ws.ID, agent, sessionName)
+	if err != nil {
+		_ = e.tmux.KillSession(sessionName)
+		return fmt.Errorf("executor: create session record: %w", err)
+	}
+
+	return nil
+}
+
 // KillSession finds the active session for a workspace and destroys it.
 func (e *Executor) KillSession(ctx context.Context, workspaceID int64, agent string) error {
 	sess, err := e.store.GetActiveSession(ctx, workspaceID)

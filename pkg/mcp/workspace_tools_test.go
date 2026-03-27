@@ -14,8 +14,10 @@ import (
 
 // mockStore implements MCPStore for testing.
 type mockStore struct {
-	workspaces map[string]*core.Workspace
-	nextID     int64
+	workspaces   map[string]*core.Workspace
+	sessions     []core.Session
+	modelConfigs []store.ModelConfig
+	nextID       int64
 }
 
 func newMockStore() *mockStore {
@@ -85,7 +87,10 @@ func (m *mockStore) GetActiveSession(_ context.Context, _ int64) (*core.Session,
 }
 
 func (m *mockStore) ListSessions(_ context.Context) ([]core.Session, error) {
-	return nil, nil
+	if m.sessions != nil {
+		return m.sessions, nil
+	}
+	return []core.Session{}, nil
 }
 
 func (m *mockStore) UpdateSessionStatus(_ context.Context, _ int64, _ string) error {
