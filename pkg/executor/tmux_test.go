@@ -2,6 +2,7 @@ package executor
 
 import (
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -148,14 +149,7 @@ func TestTmuxIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
-	found := false
-	for _, s := range sessions {
-		if s == session {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !slices.Contains(sessions, session) {
 		t.Errorf("ListSessions did not include %q: %v", session, sessions)
 	}
 

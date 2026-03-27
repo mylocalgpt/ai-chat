@@ -162,11 +162,8 @@ func (h *ClaudeHarness) ReadResponse(ctx context.Context, sessionName string, sn
 // findDivergence returns the index of the first line in current that differs
 // from snapshot.
 func findDivergence(snapshot, current []string) int {
-	n := len(snapshot)
-	if n > len(current) {
-		n = len(current)
-	}
-	for i := 0; i < n; i++ {
+	n := min(len(snapshot), len(current))
+	for i := range n {
 		if snapshot[i] != current[i] {
 			return i
 		}
