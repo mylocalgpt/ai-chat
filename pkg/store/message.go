@@ -58,6 +58,37 @@ func (s *Store) GetPendingMessages(ctx context.Context, channel string) ([]core.
 	return messages, rows.Err()
 }
 
+// ListMessages returns the most recent N messages for a workspace, ordered
+// chronologically (oldest first). Returns an empty slice if none.
+func (s *Store) ListMessages(ctx context.Context, workspaceID int64, limit int) ([]core.Message, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, channel, channel_msg_id, sender_id, workspace_id, content, direction, status, created_at
+		 FROM messages WHERE workspace_id = ?
+		 ORDER BY created_at DESC LIMIT ?`, workspaceID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing messages for workspace %d: %w", workspaceID, err)
+	}
+	defer rows.Close()
+
+	messages := []core.Message{}
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning message: %w", err)
+		}
+		messages = append(messages, *m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Reverse to chronological order (oldest first).
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+	return messages, nil
+}
+
 // UpdateMessageStatus changes the status of a message.
 func (s *Store) UpdateMessageStatus(ctx context.Context, id int64, status string) error {
 	_, err := s.db.ExecContext(ctx,

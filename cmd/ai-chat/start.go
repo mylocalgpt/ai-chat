@@ -83,6 +83,13 @@ func runStart(args []string) {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
+	// Start web channel (registers /ws on mux).
+	webCh := webpkg.NewWebChannel(st, mux)
+	if err := webCh.Start(ctx); err != nil {
+		slog.Error("failed to start web channel", "error", err)
+		os.Exit(1)
+	}
+
 	if webpkg.DevMode() {
 		mux.Handle("/", webpkg.NewDevProxyHandler())
 		slog.Info("dev mode: proxying web requests to Vite at :5173")
@@ -105,6 +112,7 @@ func runStart(args []string) {
 
 	slog.Info("shutting down")
 	tg.Stop()
+	webCh.Stop()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	srv.Shutdown(shutdownCtx)
