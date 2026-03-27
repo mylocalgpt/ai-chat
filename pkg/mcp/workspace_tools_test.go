@@ -18,6 +18,7 @@ type mockStore struct {
 	sessions     []core.Session
 	modelConfigs []store.ModelConfig
 	nextID       int64
+	pingErr      error
 }
 
 func newMockStore() *mockStore {
@@ -25,6 +26,13 @@ func newMockStore() *mockStore {
 		workspaces: make(map[string]*core.Workspace),
 		nextID:     1,
 	}
+}
+
+func (m *mockStore) Ping(_ context.Context) error {
+	if m.pingErr != nil {
+		return m.pingErr
+	}
+	return nil
 }
 
 func (m *mockStore) CreateWorkspace(_ context.Context, name, path, host string) (*core.Workspace, error) {

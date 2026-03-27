@@ -10,6 +10,9 @@ import (
 
 // MCPStore defines the store operations the MCP server needs.
 type MCPStore interface {
+	// Health check
+	Ping(ctx context.Context) error
+
 	// Workspace operations
 	CreateWorkspace(ctx context.Context, name, path, host string) (*core.Workspace, error)
 	GetWorkspace(ctx context.Context, name string) (*core.Workspace, error)
