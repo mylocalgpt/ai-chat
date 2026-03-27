@@ -31,7 +31,7 @@ func TestOpenCodeDetectStatus(t *testing.T) {
 			AgentRateLimited,
 		},
 		{
-			"crashed",
+			"crashed fatal",
 			"fatal: unexpected error in rendering",
 			AgentCrashed,
 		},
@@ -39,6 +39,16 @@ func TestOpenCodeDetectStatus(t *testing.T) {
 			"crashed panic",
 			"panic: runtime error: index out of range",
 			AgentCrashed,
+		},
+		{
+			"crashed segfault",
+			"caught segfault signal",
+			AgentCrashed,
+		},
+		{
+			"normal response with error word",
+			"The error you're seeing is caused by a missing import.\nHere's how to fix it.",
+			AgentWorking,
 		},
 		{
 			"working",

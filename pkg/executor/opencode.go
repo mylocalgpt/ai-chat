@@ -120,7 +120,7 @@ func (h *OpenCodeHarness) IsReady(ctx context.Context, sessionName string) (bool
 // OpenCode-specific status patterns.
 var (
 	openCodeRateLimitRe = regexp.MustCompile(`(?i)(rate limit|model error|too many requests)`)
-	openCodeCrashRe     = regexp.MustCompile(`(?i)(error|panic|fatal)`)
+	openCodeCrashRe     = regexp.MustCompile(`(?im)(^fatal:|panic:|\bsegfault\b|segmentation fault|fatal error|SIGSEGV|SIGABRT)`)
 )
 
 // DetectStatus parses output for OpenCode status signals.

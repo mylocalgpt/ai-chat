@@ -9,10 +9,9 @@ import (
 )
 
 // ClaudeOneShotHarness implements CLIHarness for quick Claude queries via the
-// CLI's one-shot mode.
+// CLI's one-shot mode. It is stateless and safe for concurrent use.
 type ClaudeOneShotHarness struct {
-	timeout       time.Duration
-	lastSessionID string
+	timeout time.Duration
 }
 
 // OneShotOption configures a ClaudeOneShotHarness.
@@ -56,14 +55,13 @@ func parseOneShotResponse(data []byte) (string, string, error) {
 }
 
 // Execute runs a one-shot Claude query and returns the response text.
+// Each call is independent; session continuity via --resume should be managed
+// by the caller if needed.
 func (h *ClaudeOneShotHarness) Execute(ctx context.Context, workDir, message string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
 
 	args := []string{"-p", "--output-format", "json", "--bare", message}
-	if h.lastSessionID != "" {
-		args = append([]string{"--resume", h.lastSessionID}, args...)
-	}
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = workDir
@@ -73,16 +71,9 @@ func (h *ClaudeOneShotHarness) Execute(ctx context.Context, workDir, message str
 		return "", fmt.Errorf("claude oneshot: %w", err)
 	}
 
-	result, sessionID, err := parseOneShotResponse(out)
+	result, _, err := parseOneShotResponse(out)
 	if err != nil {
 		return "", err
 	}
-	h.lastSessionID = sessionID
 	return result, nil
-}
-
-// LastSessionID returns the session ID from the most recent Execute call,
-// which can be used with --resume for follow-up queries.
-func (h *ClaudeOneShotHarness) LastSessionID() string {
-	return h.lastSessionID
 }
