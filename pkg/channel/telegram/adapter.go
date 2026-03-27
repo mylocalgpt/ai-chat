@@ -123,52 +123,77 @@ func (t *TelegramAdapter) SetMessageHandler(fn func(context.Context, core.Inboun
 	t.msgHandler = fn
 }
 
-// Send delivers an outbound message to Telegram. It sends a typing indicator,
-// attempts Markdown formatting, and falls back to plain text on parse failure.
+// Send delivers an outbound message to Telegram. Long messages are split into
+// chunks at natural boundaries before sending.
 func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) error {
-	chatID, err := strconv.ParseInt(msg.RecipientID, 10, 64)
-	if err != nil {
-		return fmt.Errorf("parsing recipient ID %q: %w", msg.RecipientID, err)
+	chunks := ChunkMessage(msg.Content, TelegramMaxMessageLen)
+	if len(chunks) == 0 {
+		return nil
 	}
 
-	// Send typing indicator (best-effort).
-	_, typingErr := t.bot.SendChatAction(ctx, &bot.SendChatActionParams{
-		ChatID: chatID,
-		Action: models.ChatActionTyping,
-	})
-	if typingErr != nil {
-		slog.Warn("failed to send typing indicator", "chat_id", chatID, "error", typingErr)
+	for i, chunk := range chunks {
+		replyTo := ""
+		if i == 0 {
+			replyTo = msg.ReplyToID
+		}
+
+		if err := t.sendSingle(ctx, msg.RecipientID, chunk, replyTo, i == 0); err != nil {
+			return err
+		}
+
+		if i < len(chunks)-1 {
+			time.Sleep(150 * time.Millisecond)
+		}
+	}
+	return nil
+}
+
+// sendSingle sends a single message to Telegram with optional typing
+// indicator, Markdown formatting, and plain-text fallback.
+func (t *TelegramAdapter) sendSingle(ctx context.Context, recipientID, text, replyToID string, sendTyping bool) error {
+	chatID, err := strconv.ParseInt(recipientID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("parsing recipient ID %q: %w", recipientID, err)
+	}
+
+	if sendTyping {
+		_, typingErr := t.bot.SendChatAction(ctx, &bot.SendChatActionParams{
+			ChatID: chatID,
+			Action: models.ChatActionTyping,
+		})
+		if typingErr != nil {
+			slog.Warn("failed to send typing indicator", "chat_id", chatID, "error", typingErr)
+		}
 	}
 
 	params := &bot.SendMessageParams{
 		ChatID:    chatID,
-		Text:      msg.Content,
+		Text:      text,
 		ParseMode: models.ParseModeMarkdownV1,
 	}
 
-	if msg.ReplyToID != "" {
-		replyToID, err := strconv.Atoi(msg.ReplyToID)
+	if replyToID != "" {
+		id, err := strconv.Atoi(replyToID)
 		if err != nil {
-			return fmt.Errorf("parsing reply-to ID %q: %w", msg.ReplyToID, err)
+			return fmt.Errorf("parsing reply-to ID %q: %w", replyToID, err)
 		}
 		params.ReplyParameters = &models.ReplyParameters{
-			MessageID: replyToID,
+			MessageID: id,
 		}
 	}
 
 	_, err = t.bot.SendMessage(ctx, params)
 	if err != nil {
 		if errors.Is(err, bot.ErrorBadRequest) {
-			// Markdown parse failure, retry as plain text.
 			slog.Warn("markdown parse failed, retrying as plain text", "chat_id", chatID)
 			params.ParseMode = ""
 			_, retryErr := t.bot.SendMessage(ctx, params)
 			if retryErr != nil {
-				return fmt.Errorf("sending message to %s: %w", msg.RecipientID, retryErr)
+				return fmt.Errorf("sending message to %s: %w", recipientID, retryErr)
 			}
 			return nil
 		}
-		return fmt.Errorf("sending message to %s: %w", msg.RecipientID, err)
+		return fmt.Errorf("sending message to %s: %w", recipientID, err)
 	}
 
 	return nil
