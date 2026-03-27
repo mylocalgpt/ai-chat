@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -122,8 +123,53 @@ func (t *TelegramAdapter) SetMessageHandler(fn func(context.Context, core.Inboun
 	t.msgHandler = fn
 }
 
-// Send delivers an outbound message to Telegram. Stub for now, implemented
-// in Phase 3.
+// Send delivers an outbound message to Telegram. It sends a typing indicator,
+// attempts Markdown formatting, and falls back to plain text on parse failure.
 func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) error {
+	chatID, err := strconv.ParseInt(msg.RecipientID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("parsing recipient ID %q: %w", msg.RecipientID, err)
+	}
+
+	// Send typing indicator (best-effort).
+	_, typingErr := t.bot.SendChatAction(ctx, &bot.SendChatActionParams{
+		ChatID: chatID,
+		Action: models.ChatActionTyping,
+	})
+	if typingErr != nil {
+		slog.Warn("failed to send typing indicator", "chat_id", chatID, "error", typingErr)
+	}
+
+	params := &bot.SendMessageParams{
+		ChatID:    chatID,
+		Text:      msg.Content,
+		ParseMode: models.ParseModeMarkdownV1,
+	}
+
+	if msg.ReplyToID != "" {
+		replyToID, err := strconv.Atoi(msg.ReplyToID)
+		if err != nil {
+			return fmt.Errorf("parsing reply-to ID %q: %w", msg.ReplyToID, err)
+		}
+		params.ReplyParameters = &models.ReplyParameters{
+			MessageID: replyToID,
+		}
+	}
+
+	_, err = t.bot.SendMessage(ctx, params)
+	if err != nil {
+		if errors.Is(err, bot.ErrorBadRequest) {
+			// Markdown parse failure, retry as plain text.
+			slog.Warn("markdown parse failed, retrying as plain text", "chat_id", chatID)
+			params.ParseMode = ""
+			_, retryErr := t.bot.SendMessage(ctx, params)
+			if retryErr != nil {
+				return fmt.Errorf("sending message to %s: %w", msg.RecipientID, retryErr)
+			}
+			return nil
+		}
+		return fmt.Errorf("sending message to %s: %w", msg.RecipientID, err)
+	}
+
 	return nil
 }
