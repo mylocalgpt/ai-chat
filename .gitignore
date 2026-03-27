@@ -1,1 +1,28 @@
+# Binary
+ai-chat
+
+# Config (real secrets)
+config.json
 .env
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs (local scratch)
+_docs/
+
+# Web build artifacts
+web/dist/
+web/node_modules/

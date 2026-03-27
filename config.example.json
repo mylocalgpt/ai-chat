@@ -1,0 +1,12 @@
+{
+  "telegram": {
+    "bot_token": "your-telegram-bot-token",
+    "allowed_users": [123456789]
+  },
+  "openrouter": {
+    "api_key": "your-openrouter-api-key"
+  },
+  "db_path": "~/.ai-chat/state.db",
+  "log_dir": "~/.ai-chat/logs/",
+  "http_addr": "127.0.0.1:8080"
+}
