@@ -1,7 +1,9 @@
+import { useCallback } from "react";
 import { Header } from "./components/Header";
 import { MessageList } from "./components/MessageList";
 import { InputBar } from "./components/InputBar";
 import { useWebSocket } from "./hooks/useWebSocket";
+import { useSpeechRecognition } from "./hooks/useSpeechRecognition";
 
 function App() {
   const {
@@ -11,10 +13,41 @@ function App() {
     isConnected,
     isReconnecting,
     isTyping,
-    error,
+    error: wsError,
     sendMessage,
     switchWorkspace,
   } = useWebSocket();
+
+  const handleSpeechEnd = useCallback(
+    (transcript: string) => {
+      if (transcript.trim() && isConnected) {
+        // Brief delay so the user can see the final transcript.
+        setTimeout(() => {
+          sendMessage(transcript.trim());
+        }, 200);
+      }
+    },
+    [isConnected, sendMessage],
+  );
+
+  const {
+    isSupported: voiceSupported,
+    isListening: voiceListening,
+    transcript: voiceTranscript,
+    error: voiceError,
+    startListening,
+    stopListening,
+  } = useSpeechRecognition(handleSpeechEnd);
+
+  const handleVoiceToggle = useCallback(() => {
+    if (voiceListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  }, [voiceListening, startListening, stopListening]);
+
+  const displayError = voiceError || wsError;
 
   return (
     <div className="flex h-screen flex-col bg-surface-0">
@@ -24,17 +57,25 @@ function App() {
         isConnected={isConnected}
         isReconnecting={isReconnecting}
         onSwitchWorkspace={switchWorkspace}
+        voiceSupported={voiceSupported}
+        voiceListening={voiceListening}
+        onVoiceToggle={handleVoiceToggle}
       />
 
-      {error && (
+      {displayError && (
         <div className="shrink-0 border-b border-error/20 bg-error/10 px-3 py-1.5 text-xs text-error">
-          {error}
+          {displayError}
         </div>
       )}
 
       <MessageList messages={messages} isTyping={isTyping} />
 
-      <InputBar isConnected={isConnected} onSend={sendMessage} />
+      <InputBar
+        isConnected={isConnected}
+        isListening={voiceListening}
+        voiceTranscript={voiceTranscript}
+        onSend={sendMessage}
+      />
     </div>
   );
 }

@@ -6,6 +6,9 @@ interface HeaderProps {
   isConnected: boolean;
   isReconnecting: boolean;
   onSwitchWorkspace: (workspace: string) => void;
+  voiceSupported: boolean;
+  voiceListening: boolean;
+  onVoiceToggle: () => void;
 }
 
 export function Header({
@@ -14,6 +17,9 @@ export function Header({
   isConnected,
   isReconnecting,
   onSwitchWorkspace,
+  voiceSupported,
+  voiceListening,
+  onVoiceToggle,
 }: HeaderProps) {
   const statusColor = isConnected
     ? "bg-success"
@@ -50,29 +56,35 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-3">
-        {/* Voice button placeholder - wired in Phase 4 */}
-        <button
-          disabled
-          className="flex h-8 w-8 items-center justify-center rounded text-text-muted opacity-40"
-          title="Voice input (coming soon)"
-          aria-label="Voice input"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        {voiceSupported && (
+          <button
+            onClick={onVoiceToggle}
+            disabled={!isConnected}
+            className={`flex h-8 w-8 items-center justify-center rounded transition-colors ${
+              voiceListening
+                ? "text-error animate-voice-pulse"
+                : "text-text-muted hover:text-text-primary"
+            } disabled:opacity-40 disabled:cursor-not-allowed`}
+            title={voiceListening ? "Stop listening" : "Start voice input"}
+            aria-label={voiceListening ? "Stop listening" : "Start voice input"}
           >
-            <rect x="5" y="1" width="6" height="9" rx="3" />
-            <path d="M3 7a5 5 0 0 0 10 0" />
-            <line x1="8" y1="12" x2="8" y2="15" />
-            <line x1="5.5" y1="15" x2="10.5" y2="15" />
-          </svg>
-        </button>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="5" y="1" width="6" height="9" rx="3" />
+              <path d="M3 7a5 5 0 0 0 10 0" />
+              <line x1="8" y1="12" x2="8" y2="15" />
+              <line x1="5.5" y1="15" x2="10.5" y2="15" />
+            </svg>
+          </button>
+        )}
 
         <div className="flex items-center gap-1.5" title={statusLabel}>
           <span className={`inline-block h-2 w-2 rounded-full ${statusColor}`} />
@@ -81,6 +93,16 @@ export function Header({
           </span>
         </div>
       </div>
+
+      <style>{`
+        @keyframes voice-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.7; transform: scale(1.15); }
+        }
+        .animate-voice-pulse {
+          animation: voice-pulse 1.2s ease-in-out infinite;
+        }
+      `}</style>
     </header>
   );
 }
