@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
+	"github.com/mylocalgpt/ai-chat/pkg/executor"
 	mcppkg "github.com/mylocalgpt/ai-chat/pkg/mcp"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
@@ -45,9 +47,34 @@ func runStdio() {
 	defer st.Close()
 
 	mcpCfg := &mcppkg.ServerConfig{
-		AllowedUsers: cfg.Telegram.AllowedUsers, // may be empty if Telegram not configured
+		AllowedUsers: cfg.Telegram.AllowedUsers,
 	}
-	srv := mcppkg.NewServer(st, mcpCfg)
+
+	var opts []mcppkg.Option
+
+	// Wire executor for session management.
+	tmx := executor.NewTmux()
+	registry := executor.NewHarnessRegistry(tmx)
+	exec := executor.NewExecutor(st, tmx, registry)
+	opts = append(opts, mcppkg.WithExecutor(exec))
+
+	// Wire Telegram adapter if bot token is configured.
+	// The adapter is NOT started (no long polling) - only used for API calls
+	// (setMyCommands, sendMessage) and connectivity checks.
+	if cfg.Telegram.BotToken != "" {
+		tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
+			BotToken:     cfg.Telegram.BotToken,
+			AllowedUsers: cfg.Telegram.AllowedUsers,
+		}, st)
+		if err != nil {
+			slog.Warn("telegram adapter unavailable for MCP, continuing without it", "error", err)
+		} else {
+			opts = append(opts, mcppkg.WithNotifier(tg))
+			opts = append(opts, mcppkg.WithChannelAdapter(tg))
+		}
+	}
+
+	srv := mcppkg.NewServer(st, mcpCfg, opts...)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

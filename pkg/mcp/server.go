@@ -34,6 +34,7 @@ func NewServer(st MCPStore, cfg *ServerConfig, opts ...Option) *Server {
 	srv.registerWorkspaceTools()
 	srv.registerSessionTools()
 	srv.registerHealthTools()
+	srv.registerModelTools()
 
 	return srv
 }

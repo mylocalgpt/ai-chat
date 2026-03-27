@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
@@ -109,12 +108,23 @@ func (m *mockStore) GetModelConfig(_ context.Context, _ string) (*store.ModelCon
 	return nil, store.ErrNotFound
 }
 
-func (m *mockStore) SetModelConfig(_ context.Context, _ store.ModelConfig) error {
+func (m *mockStore) SetModelConfig(_ context.Context, cfg store.ModelConfig) error {
+	// Upsert by role.
+	for i, existing := range m.modelConfigs {
+		if existing.Role == cfg.Role {
+			m.modelConfigs[i] = cfg
+			return nil
+		}
+	}
+	m.modelConfigs = append(m.modelConfigs, cfg)
 	return nil
 }
 
 func (m *mockStore) ListModelConfigs(_ context.Context) ([]store.ModelConfig, error) {
-	return nil, nil
+	if m.modelConfigs != nil {
+		return m.modelConfigs, nil
+	}
+	return []store.ModelConfig{}, nil
 }
 
 // mockNotifier tracks calls to OnWorkspacesChanged.
@@ -401,6 +411,3 @@ func TestWorkspaceRegisterWithMetadata(t *testing.T) {
 		t.Errorf("expected default_agent 'claude', got %v", m["default_agent"])
 	}
 }
-
-// Ensure unused import suppression.
-var _ = os.Getenv
