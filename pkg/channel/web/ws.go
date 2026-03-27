@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/coder/websocket"
@@ -81,8 +82,17 @@ func (wc *WebChannel) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	// Parse optional since parameter for reconnect history replay.
+	var sinceTime *time.Time
+	if sinceParam := r.URL.Query().Get("since"); sinceParam != "" {
+		if sinceMs, err := strconv.ParseInt(sinceParam, 10, 64); err == nil {
+			t := time.UnixMilli(sinceMs)
+			sinceTime = &t
+		}
+	}
+
 	// Send initial status.
-	if err := wc.sendStatus(ctx, conn); err != nil {
+	if err := wc.sendStatus(ctx, conn, sinceTime); err != nil {
 		slog.Error("failed to send initial status", "error", err)
 		return
 	}
@@ -118,7 +128,8 @@ func (wc *WebChannel) handleWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // sendStatus sends the current workspace and message state to the client.
-func (wc *WebChannel) sendStatus(ctx context.Context, conn *websocket.Conn) error {
+// If since is non-nil, only messages after that time are included (for reconnect).
+func (wc *WebChannel) sendStatus(ctx context.Context, conn *websocket.Conn, since *time.Time) error {
 	workspaces, err := wc.store.ListWorkspaces(ctx)
 	if err != nil {
 		return fmt.Errorf("listing workspaces: %w", err)
@@ -156,7 +167,13 @@ func (wc *WebChannel) sendStatus(ctx context.Context, conn *websocket.Conn) erro
 
 	var msgInfos []MessageInfo
 	if activeWorkspaceID > 0 {
-		messages, err := wc.store.ListMessages(ctx, activeWorkspaceID, historyLimit)
+		var messages []core.Message
+		var err error
+		if since != nil {
+			messages, err = wc.store.ListMessagesSince(ctx, activeWorkspaceID, *since)
+		} else {
+			messages, err = wc.store.ListMessages(ctx, activeWorkspaceID, historyLimit)
+		}
 		if err != nil {
 			return fmt.Errorf("listing messages: %w", err)
 		}
@@ -225,7 +242,7 @@ func (wc *WebChannel) handleSwitchWorkspace(ctx context.Context, conn *websocket
 		return
 	}
 
-	if err := wc.sendStatus(ctx, conn); err != nil {
+	if err := wc.sendStatus(ctx, conn, nil); err != nil {
 		slog.Error("failed to send status after workspace switch", "error", err)
 	}
 }

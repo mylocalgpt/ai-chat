@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
@@ -87,6 +88,30 @@ func (s *Store) ListMessages(ctx context.Context, workspaceID int64, limit int) 
 		messages[i], messages[j] = messages[j], messages[i]
 	}
 	return messages, nil
+}
+
+// ListMessagesSince returns messages for a workspace created after the given
+// timestamp, ordered chronologically. Capped at 200 results.
+func (s *Store) ListMessagesSince(ctx context.Context, workspaceID int64, since time.Time) ([]core.Message, error) {
+	sinceStr := since.UTC().Format(time.DateTime)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, channel, channel_msg_id, sender_id, workspace_id, content, direction, status, created_at
+		 FROM messages WHERE workspace_id = ? AND created_at > ?
+		 ORDER BY created_at ASC LIMIT 200`, workspaceID, sinceStr)
+	if err != nil {
+		return nil, fmt.Errorf("listing messages since %s for workspace %d: %w", sinceStr, workspaceID, err)
+	}
+	defer rows.Close()
+
+	messages := []core.Message{}
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning message: %w", err)
+		}
+		messages = append(messages, *m)
+	}
+	return messages, rows.Err()
 }
 
 // UpdateMessageStatus changes the status of a message.

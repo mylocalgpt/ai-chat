@@ -6,6 +6,7 @@ import { TypingIndicator } from "./TypingIndicator";
 interface MessageListProps {
   messages: Message[];
   isTyping: boolean;
+  isOffline: boolean;
 }
 
 function formatTime(iso: string): string {
@@ -21,15 +22,13 @@ function MessageBubble({ msg }: { msg: Message }) {
   const isUser = msg.direction === "inbound";
 
   return (
-    <div
-      className={`flex ${isUser ? "justify-end" : "justify-start"}`}
-    >
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={`max-w-[85%] sm:max-w-[75%] rounded-lg px-3 py-2 ${
           isUser
             ? "bg-msg-user text-text-primary"
             : "bg-msg-agent text-text-primary"
-        }`}
+        } ${msg.pending ? "opacity-50" : ""}`}
       >
         {isUser ? (
           <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
@@ -39,10 +38,23 @@ function MessageBubble({ msg }: { msg: Message }) {
           </div>
         )}
         <div
-          className={`mt-1 text-[10px] text-text-muted ${
-            isUser ? "text-right" : "text-left"
+          className={`mt-1 flex items-center gap-1 text-[10px] text-text-muted ${
+            isUser ? "justify-end" : "justify-start"
           }`}
         >
+          {msg.pending && (
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            >
+              <circle cx="8" cy="8" r="7" />
+              <path d="M8 4v4l3 2" strokeLinecap="round" />
+            </svg>
+          )}
           {formatTime(msg.createdAt)}
         </div>
       </div>
@@ -50,35 +62,36 @@ function MessageBubble({ msg }: { msg: Message }) {
   );
 }
 
-export function MessageList({ messages, isTyping }: MessageListProps) {
+export function MessageList({ messages, isTyping, isOffline }: MessageListProps) {
   const { containerRef, handleScroll } = useAutoScroll([
     messages.length,
     isTyping,
   ]);
 
-  if (messages.length === 0 && !isTyping) {
-    return (
-      <div
-        ref={containerRef}
-        className="flex flex-1 items-center justify-center"
-      >
-        <p className="text-sm text-text-muted">No messages yet</p>
-      </div>
-    );
-  }
-
   return (
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto px-3 py-3 sm:px-4"
+      className="flex flex-1 flex-col overflow-y-auto px-3 py-3 sm:px-4"
     >
-      <div className="mx-auto flex max-w-3xl flex-col gap-2">
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} msg={msg} />
-        ))}
-        {isTyping && <TypingIndicator />}
-      </div>
+      {isOffline && (
+        <div className="mx-auto mb-2 max-w-3xl rounded bg-warning/10 px-3 py-1.5 text-center text-xs text-warning">
+          No internet connection
+        </div>
+      )}
+
+      {messages.length === 0 && !isTyping ? (
+        <div className="flex flex-1 items-center justify-center">
+          <p className="text-sm text-text-muted">No messages yet</p>
+        </div>
+      ) : (
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+          {messages.map((msg) => (
+            <MessageBubble key={msg.id} msg={msg} />
+          ))}
+          {isTyping && <TypingIndicator />}
+        </div>
+      )}
     </div>
   );
 }
