@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -51,10 +53,42 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 	return adapter, nil
 }
 
-// handleUpdate processes incoming Telegram updates. This is a stub that will
-// be filled in by Phase 2.
+// handleUpdate processes incoming Telegram updates. It enforces the allowlist,
+// normalizes the update into a core.InboundMessage, and dispatches to the
+// registered handler (or echoes back as a default).
 func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
-	slog.Info("received update", "update_id", update.ID)
+	if update.Message == nil {
+		return
+	}
+
+	userID := update.Message.From.ID
+	if !t.allowedUsers[userID] {
+		slog.Warn("unauthorized message", "user_id", userID)
+		return
+	}
+
+	msg := core.InboundMessage{
+		ID:        strconv.FormatInt(int64(update.Message.ID), 10),
+		Channel:   "telegram",
+		SenderID:  strconv.FormatInt(update.Message.Chat.ID, 10),
+		Content:   update.Message.Text,
+		Timestamp: time.Unix(int64(update.Message.Date), 0),
+		Raw:       update,
+	}
+
+	if t.msgHandler != nil {
+		t.msgHandler(ctx, msg)
+		return
+	}
+
+	// Default echo behavior for development; replaced when the orchestrator
+	// registers its own handler via SetMessageHandler.
+	slog.Info("echo", "chat_id", msg.SenderID, "text_len", len(msg.Content))
+	t.Send(ctx, core.OutboundMessage{
+		Channel:     "telegram",
+		RecipientID: msg.SenderID,
+		Content:     msg.Content,
+	})
 }
 
 // Start connects to Telegram and begins long polling. It probes the connection
