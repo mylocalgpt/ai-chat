@@ -11,7 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	aichat "github.com/mylocalgpt/ai-chat"
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
+	webpkg "github.com/mylocalgpt/ai-chat/pkg/channel/web"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
@@ -80,6 +82,13 @@ func runStart(args []string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
 	})
+
+	if webpkg.DevMode() {
+		mux.Handle("/", webpkg.NewDevProxyHandler())
+		slog.Info("dev mode: proxying web requests to Vite at :5173")
+	} else {
+		mux.Handle("/", webpkg.NewFileHandler(aichat.WebDist))
+	}
 
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
 
