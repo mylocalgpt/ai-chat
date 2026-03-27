@@ -26,3 +26,4 @@ _docs/
 # Web build artifacts
 web/dist/
 web/node_modules/
+*.tsbuildinfo
