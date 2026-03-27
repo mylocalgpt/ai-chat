@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -56,7 +57,7 @@ func (t *TelegramAdapter) SyncCommands(ctx context.Context) error {
 
 	workspaces, err := t.store.ListWorkspaces(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("listing workspaces for command sync: %w", err)
 	}
 
 	for _, ws := range workspaces {
@@ -89,7 +90,7 @@ func (t *TelegramAdapter) SyncCommands(ctx context.Context) error {
 		Commands: commands,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("setting telegram bot commands: %w", err)
 	}
 
 	slog.Info("telegram commands synced", "count", len(commands))

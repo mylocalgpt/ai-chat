@@ -62,6 +62,11 @@ func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *
 		return
 	}
 
+	if update.Message.From == nil {
+		slog.Warn("ignoring message with nil sender (channel post or anonymous)")
+		return
+	}
+
 	userID := update.Message.From.ID
 	if !t.allowedUsers[userID] {
 		slog.Warn("unauthorized message", "user_id", userID)
