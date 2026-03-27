@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -30,7 +31,7 @@ type TelegramAdapter struct {
 	msgHandler   func(context.Context, core.InboundMessage)
 	store        *store.Store
 	cancel       context.CancelFunc
-	running      bool
+	running      atomic.Bool
 }
 
 // NewTelegramAdapter creates a new Telegram adapter. The bot token is used
@@ -110,7 +111,7 @@ func (t *TelegramAdapter) Start(ctx context.Context) error {
 	t.cancel = cancel
 
 	go t.bot.Start(childCtx)
-	t.running = true
+	t.running.Store(true)
 
 	slog.Info("telegram bot started", "username", me.Username)
 
@@ -126,13 +127,13 @@ func (t *TelegramAdapter) Stop() error {
 	if t.cancel != nil {
 		t.cancel()
 	}
-	t.running = false
+	t.running.Store(false)
 	return nil
 }
 
 // IsConnected reports whether the adapter has been started and is polling.
 func (t *TelegramAdapter) IsConnected() bool {
-	return t.bot != nil && t.running
+	return t.bot != nil && t.running.Load()
 }
 
 // SetMessageHandler registers the callback invoked for each normalized

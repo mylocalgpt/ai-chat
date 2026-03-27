@@ -100,8 +100,11 @@ func (s *Server) handleWorkspaceRegister(ctx context.Context, _ *gomcp.CallToolR
 		return nil, nil, fmt.Errorf("checking workspace: %w", err)
 	}
 
-	// Validate local path exists.
+	// Validate local path exists and is non-empty.
 	if input.Host == "" {
+		if input.Path == "" {
+			return nil, nil, fmt.Errorf("path is required for local workspaces")
+		}
 		if _, err := os.Stat(input.Path); err != nil {
 			return nil, nil, fmt.Errorf("path %q does not exist", input.Path)
 		}
