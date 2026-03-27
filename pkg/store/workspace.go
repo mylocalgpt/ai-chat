@@ -91,6 +91,18 @@ func (s *Store) UpdateWorkspaceMetadata(ctx context.Context, id int64, metadata 
 	return nil
 }
 
+// RenameWorkspace updates a workspace's name.
+func (s *Store) RenameWorkspace(ctx context.Context, id int64, newName string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE workspaces SET name = ?, updated_at = datetime('now') WHERE id = ?`,
+		newName, id,
+	)
+	if err != nil {
+		return fmt.Errorf("renaming workspace id=%d to %q: %w", id, newName, err)
+	}
+	return nil
+}
+
 // DeleteWorkspace removes a workspace by id.
 func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM workspaces WHERE id = ?`, id)

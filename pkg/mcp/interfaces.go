@@ -16,6 +16,7 @@ type MCPStore interface {
 	ListWorkspaces(ctx context.Context) ([]core.Workspace, error)
 	UpdateWorkspaceMetadata(ctx context.Context, id int64, metadata json.RawMessage) error
 	DeleteWorkspace(ctx context.Context, id int64) error
+	RenameWorkspace(ctx context.Context, id int64, newName string) error
 
 	// Session operations
 	GetActiveSession(ctx context.Context, workspaceID int64) (*core.Session, error)

@@ -31,7 +31,7 @@ func NewServer(st MCPStore, cfg *ServerConfig, opts ...Option) *Server {
 		},
 	)
 
-	// Tools registered in later phases will call registration helpers here.
+	srv.registerWorkspaceTools()
 
 	return srv
 }
