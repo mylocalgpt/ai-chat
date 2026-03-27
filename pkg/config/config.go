@@ -79,6 +79,53 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// LoadForMCP loads config without requiring Telegram credentials.
+// Used by the MCP stdio entrypoint where Telegram is optional.
+func LoadForMCP(path string) (*Config, error) {
+	if path == "" {
+		path = "~/.ai-chat/config.json"
+	}
+
+	expanded, err := expandHome(path)
+	if err != nil {
+		return nil, fmt.Errorf("expanding config path: %w", err)
+	}
+
+	data, err := os.ReadFile(expanded)
+	if err != nil {
+		return nil, fmt.Errorf("reading config file %s: %w", expanded, err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing config file %s: %w", expanded, err)
+	}
+
+	// Apply defaults for empty fields.
+	if cfg.DBPath == "" {
+		cfg.DBPath = "~/.ai-chat/state.db"
+	}
+	if cfg.LogDir == "" {
+		cfg.LogDir = "~/.ai-chat/logs/"
+	}
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = "127.0.0.1:8080"
+	}
+
+	// Expand tilde in path fields.
+	cfg.DBPath, err = expandHome(cfg.DBPath)
+	if err != nil {
+		return nil, fmt.Errorf("expanding db_path: %w", err)
+	}
+	cfg.LogDir, err = expandHome(cfg.LogDir)
+	if err != nil {
+		return nil, fmt.Errorf("expanding log_dir: %w", err)
+	}
+
+	// Skip Validate() -- Telegram config is optional for MCP.
+	return &cfg, nil
+}
+
 // Validate checks that required config fields are populated.
 // Returns the first validation error found.
 func (c *Config) Validate() error {
