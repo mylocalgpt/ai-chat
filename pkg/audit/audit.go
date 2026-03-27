@@ -8,6 +8,7 @@ package audit
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -42,25 +43,36 @@ type AuditLogger struct {
 	current     *os.File
 	currentDate string
 	nowFunc     func() time.Time // defaults to time.Now, injectable for tests
+	done        chan struct{}
 }
 
 // NewAuditLogger creates an AuditLogger that writes to dir. If dir does not
-// exist it is created. retainDays controls how long old files are kept (used
-// by the rotation logic added in Phase 2).
+// exist it is created. retainDays controls how long old files are kept; old
+// files are cleaned up on startup and once per day via a background goroutine.
 func NewAuditLogger(dir string, retainDays int) (*AuditLogger, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("audit: create log dir: %w", err)
+	}
+
+	// Run startup cleanup.
+	if count, err := RotateOldLogs(dir, retainDays); err != nil {
+		slog.Error("audit: startup rotation failed", "error", err)
+	} else if count > 0 {
+		slog.Info("audit: cleaned up old log files", "count", count)
 	}
 
 	a := &AuditLogger{
 		dir:        dir,
 		retainDays: retainDays,
 		nowFunc:    time.Now,
+		done:       make(chan struct{}),
 	}
 
 	if err := a.openToday(); err != nil {
 		return nil, err
 	}
+
+	go a.backgroundRotation()
 
 	return a, nil
 }
@@ -91,8 +103,10 @@ func (a *AuditLogger) Log(entry AuditEntry) error {
 	return nil
 }
 
-// Close closes the underlying file handle.
+// Close stops the background rotation goroutine and closes the file handle.
 func (a *AuditLogger) Close() error {
+	close(a.done)
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -131,4 +145,28 @@ func (a *AuditLogger) now() time.Time {
 		return a.nowFunc()
 	}
 	return time.Now()
+}
+
+// backgroundRotation runs daily log cleanup in the background. It fires at
+// the next UTC midnight and then every 24 hours. Errors are logged but never
+// cause a crash.
+func (a *AuditLogger) backgroundRotation() {
+	now := a.now().UTC()
+	nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	timer := time.NewTimer(nextMidnight.Sub(now))
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-a.done:
+			return
+		case <-timer.C:
+			if count, err := RotateOldLogs(a.dir, a.retainDays); err != nil {
+				slog.Error("audit: rotation failed", "error", err)
+			} else if count > 0 {
+				slog.Info("audit: cleaned up old log files", "count", count)
+			}
+			timer.Reset(24 * time.Hour)
+		}
+	}
 }
