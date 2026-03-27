@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
@@ -53,9 +54,25 @@ func runStart(args []string) {
 
 	st := store.New(db)
 
+	// Initialize Telegram adapter.
+	tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
+		BotToken:     cfg.Telegram.BotToken,
+		AllowedUsers: cfg.Telegram.AllowedUsers,
+	}, st)
+	if err != nil {
+		slog.Error("failed to create telegram adapter", "error", err)
+		os.Exit(1)
+	}
+
 	// Signal handling for graceful shutdown.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Start Telegram long polling.
+	if err := tg.Start(ctx); err != nil {
+		slog.Error("failed to start telegram adapter", "error", err)
+		os.Exit(1)
+	}
 
 	// HTTP server with health endpoint.
 	mux := http.NewServeMux()
@@ -78,6 +95,7 @@ func runStart(args []string) {
 	<-ctx.Done()
 
 	slog.Info("shutting down")
+	tg.Stop()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	srv.Shutdown(shutdownCtx)
