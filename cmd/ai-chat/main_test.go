@@ -1,13 +1,9 @@
 package main
 
 import (
-	"io"
-	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
@@ -16,27 +12,17 @@ import (
 func TestStartIntegration(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
+	responsesDir := filepath.Join(dir, "responses")
 
-	// Find a free port.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("finding free port: %v", err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
-
-	// Write a valid config file.
+	// Write a valid config file (no openrouter required).
 	cfgJSON := `{
 		"telegram": {
 			"bot_token": "test-token",
 			"allowed_users": [123]
 		},
-		"openrouter": {
-			"api_key": "test-key"
-		},
 		"db_path": "` + dbPath + `",
 		"log_dir": "` + dir + `",
-		"http_addr": "` + addr + `"
+		"responses_dir": "` + responsesDir + `"
 	}`
 	cfgPath := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
@@ -47,6 +33,15 @@ func TestStartIntegration(t *testing.T) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
+	}
+
+	if cfg.ResponsesDir != responsesDir {
+		t.Errorf("responses_dir = %q, want %q", cfg.ResponsesDir, responsesDir)
+	}
+
+	// OpenRouter should be empty but not cause an error.
+	if cfg.OpenRouter.APIKey != "" {
+		t.Errorf("openrouter.api_key = %q, want empty", cfg.OpenRouter.APIKey)
 	}
 
 	// Open and migrate DB.
@@ -60,41 +55,17 @@ func TestStartIntegration(t *testing.T) {
 		t.Fatalf("store.Migrate: %v", err)
 	}
 
-	// Set up HTTP server with health endpoint.
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
+	// Create responses directory.
+	if err := os.MkdirAll(cfg.ResponsesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll responses: %v", err)
+	}
 
-	go func() { _ = srv.ListenAndServe() }()
-	defer func() { _ = srv.Close() }()
-
-	// Wait briefly for the server to start.
-	time.Sleep(50 * time.Millisecond)
-
-	// Test health endpoint.
-	resp, err := http.Get("http://" + addr + "/health")
+	// Verify directory was created.
+	info, err := os.Stat(cfg.ResponsesDir)
 	if err != nil {
-		t.Fatalf("GET /health: %v", err)
+		t.Fatalf("responses dir not created: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != 200 {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("reading body: %v", err)
-	}
-	if string(body) != `{"status":"ok"}` {
-		t.Errorf("body = %q, want %q", body, `{"status":"ok"}`)
-	}
-
-	ct := resp.Header.Get("Content-Type")
-	if ct != "application/json" {
-		t.Errorf("Content-Type = %q, want %q", ct, "application/json")
+	if !info.IsDir() {
+		t.Error("responses_dir is not a directory")
 	}
 }

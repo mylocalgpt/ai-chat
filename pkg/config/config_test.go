@@ -28,7 +28,7 @@ func validJSON() string {
 		},
 		"db_path": "/tmp/test.db",
 		"log_dir": "/tmp/logs/",
-		"http_addr": "127.0.0.1:9090"
+		"responses_dir": "/tmp/responses/"
 	}`
 }
 
@@ -58,8 +58,8 @@ func TestLoad(t *testing.T) {
 				if cfg.LogDir != "/tmp/logs/" {
 					t.Errorf("log_dir = %q, want %q", cfg.LogDir, "/tmp/logs/")
 				}
-				if cfg.HTTPAddr != "127.0.0.1:9090" {
-					t.Errorf("http_addr = %q, want %q", cfg.HTTPAddr, "127.0.0.1:9090")
+				if cfg.ResponsesDir != "/tmp/responses/" {
+					t.Errorf("responses_dir = %q, want %q", cfg.ResponsesDir, "/tmp/responses/")
 				}
 			},
 		},
@@ -88,8 +88,7 @@ func TestLoad(t *testing.T) {
 				"telegram": {
 					"bot_token": "tok",
 					"allowed_users": [1]
-				},
-				"openrouter": {"api_key": "or-test"}
+				}
 			}`,
 			check: func(t *testing.T, cfg *Config) {
 				home, _ := os.UserHomeDir()
@@ -101,8 +100,9 @@ func TestLoad(t *testing.T) {
 				if cfg.LogDir != wantLog {
 					t.Errorf("log_dir = %q, want %q", cfg.LogDir, wantLog)
 				}
-				if cfg.HTTPAddr != "127.0.0.1:8080" {
-					t.Errorf("http_addr = %q, want %q", cfg.HTTPAddr, "127.0.0.1:8080")
+				wantResponses := filepath.Join(home, ".config", "ai-chat", "responses")
+				if cfg.ResponsesDir != wantResponses {
+					t.Errorf("responses_dir = %q, want %q", cfg.ResponsesDir, wantResponses)
 				}
 			},
 		},
@@ -113,7 +113,6 @@ func TestLoad(t *testing.T) {
 					"bot_token": "tok",
 					"allowed_users": [1]
 				},
-				"openrouter": {"api_key": "or-test"},
 				"db_path": "~/data/state.db"
 			}`,
 			check: func(t *testing.T, cfg *Config) {
@@ -172,9 +171,9 @@ func TestStringRedactsSecrets(t *testing.T) {
 		OpenRouter: OpenRouterConfig{
 			APIKey: "secret-api-key",
 		},
-		DBPath:   "/home/user/.ai-chat/state.db",
-		LogDir:   "/home/user/.ai-chat/logs/",
-		HTTPAddr: "127.0.0.1:8080",
+		DBPath:       "/home/user/.ai-chat/state.db",
+		LogDir:       "/home/user/.ai-chat/logs/",
+		ResponsesDir: "/home/user/.ai-chat/responses/",
 	}
 
 	s := cfg.String()
@@ -194,6 +193,9 @@ func TestStringRedactsSecrets(t *testing.T) {
 	if !strings.Contains(s, "/home/user/.ai-chat/state.db") {
 		t.Error("String() should show db_path")
 	}
+	if !strings.Contains(s, "/home/user/.ai-chat/responses/") {
+		t.Error("String() should show responses_dir")
+	}
 }
 
 func TestStringNotSet(t *testing.T) {
@@ -212,7 +214,7 @@ func TestValidate(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "valid",
+			name: "valid with openrouter",
 			cfg: Config{
 				Telegram: TelegramConfig{
 					BotToken:     "tok",
@@ -224,14 +226,13 @@ func TestValidate(t *testing.T) {
 			},
 		},
 		{
-			name: "missing openrouter api_key",
+			name: "valid without openrouter",
 			cfg: Config{
 				Telegram: TelegramConfig{
 					BotToken:     "tok",
 					AllowedUsers: []int64{1},
 				},
 			},
-			wantErr: "openrouter.api_key is required",
 		},
 		{
 			name: "missing bot_token",

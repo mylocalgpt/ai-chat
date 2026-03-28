@@ -5,18 +5,14 @@ import (
 	"flag"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
-	aichat "github.com/mylocalgpt/ai-chat"
 	"github.com/mylocalgpt/ai-chat/pkg/audit"
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
-	webpkg "github.com/mylocalgpt/ai-chat/pkg/channel/web"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
@@ -88,6 +84,12 @@ func runStart(args []string) {
 		slog.Info("reconciled sessions", "crashed", res.Crashed, "orphaned", res.Orphaned)
 	}
 
+	// Create response directory.
+	if err := os.MkdirAll(cfg.ResponsesDir, 0o755); err != nil {
+		slog.Error("failed to create responses directory", "dir", cfg.ResponsesDir, "error", err)
+		os.Exit(1)
+	}
+
 	// Create MCP server with executor.
 	mcpCfg := &mcppkg.ServerConfig{AllowedUsers: cfg.Telegram.AllowedUsers}
 	mcpSrv := mcppkg.NewServer(st, mcpCfg, mcppkg.WithExecutor(exec))
@@ -100,12 +102,17 @@ func runStart(args []string) {
 	}
 	defer func() { _ = mcpSession.Close() }()
 
-	// Initialize orchestrator.
-	router := orchestrator.NewRouter(cfg.OpenRouter.APIKey)
-	orch := orchestrator.NewOrchestrator(router, mcpSession, "google/gemini-2.5-flash")
-	if err := orch.Init(context.Background()); err != nil {
-		slog.Error("failed to init orchestrator", "error", err)
-		os.Exit(1)
+	// Initialize orchestrator (only if OpenRouter key is configured).
+	var orch *orchestrator.Orchestrator
+	if cfg.OpenRouter.APIKey != "" {
+		router := orchestrator.NewRouter(cfg.OpenRouter.APIKey)
+		orch = orchestrator.NewOrchestrator(router, mcpSession, "google/gemini-2.5-flash")
+		if err := orch.Init(context.Background()); err != nil {
+			slog.Error("failed to init orchestrator", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		slog.Warn("openrouter.api_key not set, orchestrator disabled")
 	}
 
 	// Initialize Telegram adapter.
@@ -132,6 +139,15 @@ func runStart(args []string) {
 				Status:    core.StatusDone,
 			}); err != nil {
 				log.Warn("failed to persist inbound message", "error", err)
+			}
+
+			if orch == nil {
+				_ = send(ctx, core.OutboundMessage{
+					Channel:     msg.Channel,
+					RecipientID: msg.SenderID,
+					Content:     "Orchestrator not configured. Set openrouter.api_key in config.",
+				})
+				return
 			}
 
 			// Build user context string.
@@ -182,53 +198,13 @@ func runStart(args []string) {
 		os.Exit(1)
 	}
 
-	// HTTP server with health endpoint.
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	// Start web channel (registers /ws on mux).
-	webCh := webpkg.NewWebChannel(st, mux)
-	webCh.SetMessageHandler(handleMessage(webCh.Send))
-	if err := webCh.Start(ctx); err != nil {
-		slog.Error("failed to start web channel", "error", err)
-		os.Exit(1)
-	}
-
-	if webpkg.DevMode() {
-		mux.Handle("/", webpkg.NewDevProxyHandler())
-		slog.Info("dev mode: proxying web requests to Vite at :5173")
-	} else {
-		mux.Handle("/", webpkg.NewFileHandler(aichat.WebDist))
-	}
-
-	srv := &http.Server{
-		Addr:         cfg.HTTPAddr,
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
-
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("http server error", "error", err)
-		}
-	}()
-
-	slog.Info("server started", "addr", cfg.HTTPAddr, "db", cfg.DBPath)
+	slog.Info("server started", "db", cfg.DBPath, "responses_dir", cfg.ResponsesDir)
 
 	// Block until signal.
 	<-ctx.Done()
 
 	slog.Info("shutting down")
 	_ = tg.Stop()
-	_ = webCh.Stop()
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	_ = srv.Shutdown(shutdownCtx)
 	_ = st.Close()
 	_ = audit.CloseGlobal()
 }

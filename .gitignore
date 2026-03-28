@@ -10,6 +10,9 @@ config.json
 *.db-wal
 *.db-shm
 
+# Response files
+responses/
+
 # IDE
 .idea/
 .vscode/

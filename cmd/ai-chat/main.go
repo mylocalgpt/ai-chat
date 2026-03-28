@@ -20,6 +20,8 @@ func main() {
 		runStdio()
 	case "audit":
 		runAudit(os.Args[2:])
+	case "test":
+		fmt.Println("E2E testing not yet implemented")
 	case "version":
 		fmt.Println("ai-chat", version)
 	default:
@@ -31,8 +33,9 @@ func main() {
 func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage: ai-chat <command>\n\n")
 	fmt.Fprintf(os.Stderr, "Commands:\n")
-	fmt.Fprintf(os.Stderr, "  start    Start the bot and web server\n")
+	fmt.Fprintf(os.Stderr, "  start    Start the bot\n")
 	fmt.Fprintf(os.Stderr, "  stdio    Run as MCP server (stdin/stdout)\n")
 	fmt.Fprintf(os.Stderr, "  audit    Run audit analysis\n")
+	fmt.Fprintf(os.Stderr, "  test     Run E2E tests\n")
 	fmt.Fprintf(os.Stderr, "  version  Print version\n")
 }

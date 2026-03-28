@@ -10,12 +10,13 @@ import (
 
 // Config holds the application configuration loaded from a JSON file.
 type Config struct {
-	Telegram   TelegramConfig   `json:"telegram"`
-	OpenRouter OpenRouterConfig `json:"openrouter"`
+	Telegram      TelegramConfig   `json:"telegram"`
+	OpenRouter    OpenRouterConfig `json:"openrouter"`
 	DBPath        string           `json:"db_path"`
 	LogDir        string           `json:"log_dir"`
 	LogRetainDays int              `json:"log_retain_days"`
 	HTTPAddr      string           `json:"http_addr"`
+	ResponsesDir  string           `json:"responses_dir"`
 }
 
 // TelegramConfig holds Telegram bot credentials and access control.
@@ -57,8 +58,8 @@ func Load(path string) (*Config, error) {
 	if cfg.LogRetainDays == 0 {
 		cfg.LogRetainDays = 30
 	}
-	if cfg.HTTPAddr == "" {
-		cfg.HTTPAddr = "127.0.0.1:8080"
+	if cfg.ResponsesDir == "" {
+		cfg.ResponsesDir = appDir() + "/responses"
 	}
 
 	// Expand tilde in path fields.
@@ -69,6 +70,10 @@ func Load(path string) (*Config, error) {
 	cfg.LogDir, err = expandHome(cfg.LogDir)
 	if err != nil {
 		return nil, fmt.Errorf("expanding log_dir: %w", err)
+	}
+	cfg.ResponsesDir, err = expandHome(cfg.ResponsesDir)
+	if err != nil {
+		return nil, fmt.Errorf("expanding responses_dir: %w", err)
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -106,8 +111,8 @@ func LoadForMCP(path string) (*Config, error) {
 	if cfg.LogRetainDays == 0 {
 		cfg.LogRetainDays = 30
 	}
-	if cfg.HTTPAddr == "" {
-		cfg.HTTPAddr = "127.0.0.1:8080"
+	if cfg.ResponsesDir == "" {
+		cfg.ResponsesDir = appDir() + "/responses"
 	}
 
 	// Expand tilde in path fields.
@@ -118,6 +123,10 @@ func LoadForMCP(path string) (*Config, error) {
 	cfg.LogDir, err = expandHome(cfg.LogDir)
 	if err != nil {
 		return nil, fmt.Errorf("expanding log_dir: %w", err)
+	}
+	cfg.ResponsesDir, err = expandHome(cfg.ResponsesDir)
+	if err != nil {
+		return nil, fmt.Errorf("expanding responses_dir: %w", err)
 	}
 
 	// Skip Validate() -- Telegram config is optional for MCP.
@@ -132,9 +141,6 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Telegram.AllowedUsers) == 0 {
 		return fmt.Errorf("telegram.allowed_users must have at least one entry")
-	}
-	if c.OpenRouter.APIKey == "" {
-		return fmt.Errorf("openrouter.api_key is required")
 	}
 	return nil
 }
@@ -163,7 +169,7 @@ func (c *Config) String() string {
 
 	fmt.Fprintf(&b, "db_path: %s\n", c.DBPath)
 	fmt.Fprintf(&b, "log_dir: %s\n", c.LogDir)
-	fmt.Fprintf(&b, "http_addr: %s", c.HTTPAddr)
+	fmt.Fprintf(&b, "responses_dir: %s", c.ResponsesDir)
 
 	return b.String()
 }
