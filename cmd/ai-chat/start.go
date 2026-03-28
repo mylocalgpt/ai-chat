@@ -102,7 +102,7 @@ func runStart(args []string) {
 
 	// Initialize orchestrator.
 	router := orchestrator.NewRouter(cfg.OpenRouter.APIKey)
-	orch := orchestrator.NewOrchestrator(router, mcpSession, "google/gemini-3.1-flash-lite-preview")
+	orch := orchestrator.NewOrchestrator(router, mcpSession, "google/gemini-2.5-flash")
 	if err := orch.Init(context.Background()); err != nil {
 		slog.Error("failed to init orchestrator", "error", err)
 		os.Exit(1)
@@ -237,6 +237,12 @@ func runStart(args []string) {
 // available workspaces, then formats them as a string for the LLM system prompt.
 func buildUserContext(ctx context.Context, st *store.Store, senderID, channel string) string {
 	var b strings.Builder
+
+	if home, err := os.UserHomeDir(); err == nil {
+		b.WriteString("Home directory: ")
+		b.WriteString(home)
+		b.WriteString("\n")
+	}
 
 	b.WriteString("Current workspace: ")
 	uc, err := st.GetUserContext(ctx, senderID, channel)

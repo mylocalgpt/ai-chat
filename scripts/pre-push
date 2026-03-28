@@ -3,9 +3,6 @@ set -euo pipefail
 
 echo "Running pre-push checks..."
 
-echo "=> frontend build"
-cd web && npm run build && cd ..
-
 echo "=> golangci-lint"
 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run ./...
 

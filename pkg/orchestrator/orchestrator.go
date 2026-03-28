@@ -13,7 +13,11 @@ import (
 
 const maxToolIterations = 5
 
-const orchestratorSystemPrompt = `You are an AI assistant that manages workspaces and AI agent sessions. Use the available tools for workspace, session, and agent operations. For simple greetings or questions you can answer directly, respond without tools.`
+const orchestratorSystemPrompt = `You are an AI assistant that manages workspaces and AI agent sessions. Use the available tools for workspace, session, and agent operations. For simple greetings or questions you can answer directly, respond without tools.
+
+IMPORTANT rules:
+- Always use absolute paths in tool calls. Replace ~ with the home directory shown below. Never pass ~ or relative paths to tools.
+- If a tool call fails, tell the user what went wrong. Do not retry with guessed values.`
 
 // Orchestrator routes inbound messages through a tool-calling loop backed by
 // an in-process MCP session.
@@ -68,7 +72,8 @@ func (o *Orchestrator) Init(ctx context.Context) error {
 func (o *Orchestrator) HandleMessage(ctx context.Context, msg core.InboundMessage, userContext string) (string, error) {
 	slog.Info("orchestrator handling message", "content_preview", truncate(msg.Content, 100), "tools", len(o.tools))
 
-	systemContent := userContext + "\n\n" + orchestratorSystemPrompt
+	systemContent := orchestratorSystemPrompt + "\n\n" + userContext
+	slog.Info("system prompt", "content", systemContent)
 
 	messages := []any{
 		Message{Role: "system", Content: systemContent},
