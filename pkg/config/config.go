@@ -15,7 +15,6 @@ type Config struct {
 	DBPath        string           `json:"db_path"`
 	LogDir        string           `json:"log_dir"`
 	LogRetainDays int              `json:"log_retain_days"`
-	HTTPAddr      string           `json:"http_addr"`
 	ResponsesDir  string           `json:"responses_dir"`
 }
 
