@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -29,16 +30,22 @@ func runStart(args []string) {
 	configPath := fs.String("config", "", "path to config file (default: ~/.config/ai-chat/config.json, then ./config.json)")
 	_ = fs.Parse(args)
 
-	// Set up structured JSON logging to stderr.
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	slog.SetDefault(logger)
-
 	// Load config.
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
+	// Set up structured JSON logging to stderr + daily log file.
+	logFile, err := audit.OpenDailyLog(cfg.LogDir)
+	if err != nil {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("failed to open log file", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = logFile.Close() }()
+	logger := slog.New(slog.NewJSONHandler(io.MultiWriter(os.Stderr, logFile), nil))
+	slog.SetDefault(logger)
+
 	slog.Info("config loaded", "config", cfg.String())
 
 	// Initialize audit logger.

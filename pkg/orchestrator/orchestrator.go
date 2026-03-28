@@ -66,6 +66,8 @@ func (o *Orchestrator) Init(ctx context.Context) error {
 // a tool-calling loop where the LLM can invoke MCP tools until it produces a
 // final text response.
 func (o *Orchestrator) HandleMessage(ctx context.Context, msg core.InboundMessage, userContext string) (string, error) {
+	slog.Info("orchestrator handling message", "content_preview", truncate(msg.Content, 100), "tools", len(o.tools))
+
 	systemContent := userContext + "\n\n" + orchestratorSystemPrompt
 
 	messages := []any{
@@ -80,6 +82,14 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg core.InboundMessag
 		}
 
 		choice := resp.Choices[0]
+
+		slog.Info("llm response",
+			"iteration", i,
+			"finish_reason", choice.FinishReason,
+			"tool_calls", len(choice.Message.ToolCalls),
+			"content_length", len(choice.Message.Content),
+			"content_preview", truncate(choice.Message.Content, 200),
+		)
 
 		// If the model finished without tool calls, return the text response.
 		if choice.FinishReason != "tool_calls" || len(choice.Message.ToolCalls) == 0 {
@@ -100,8 +110,11 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg core.InboundMessag
 
 		// Execute each tool call via MCP.
 		for _, tc := range choice.Message.ToolCalls {
+			slog.Info("tool call", "tool", tc.Function.Name, "args", tc.Function.Arguments)
+
 			var argsMap map[string]any
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &argsMap); err != nil {
+				slog.Warn("tool args parse error", "tool", tc.Function.Name, "error", err)
 				messages = append(messages, ToolResultMessage{
 					Role:       "tool",
 					ToolCallID: tc.ID,
@@ -115,6 +128,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg core.InboundMessag
 				Arguments: argsMap,
 			})
 			if err != nil {
+				slog.Error("tool execution error", "tool", tc.Function.Name, "error", err)
 				messages = append(messages, ToolResultMessage{
 					Role:       "tool",
 					ToolCallID: tc.ID,
@@ -131,6 +145,8 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg core.InboundMessag
 				}
 			}
 
+			slog.Info("tool result", "tool", tc.Function.Name, "result_length", len(text), "result_preview", truncate(text, 200))
+
 			messages = append(messages, ToolResultMessage{
 				Role:       "tool",
 				ToolCallID: tc.ID,
@@ -140,4 +156,11 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg core.InboundMessag
 	}
 
 	return "I wasn't able to complete that request.", nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

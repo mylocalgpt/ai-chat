@@ -31,11 +31,18 @@ func RotateOldLogs(logDir string, retainDays int) (int, error) {
 		}
 
 		name := entry.Name()
-		if !strings.HasSuffix(name, ".jsonl") {
+
+		// Match YYYY-MM-DD.jsonl and YYYY-MM-DD.log
+		var stem string
+		switch {
+		case strings.HasSuffix(name, ".jsonl"):
+			stem = strings.TrimSuffix(name, ".jsonl")
+		case strings.HasSuffix(name, ".log"):
+			stem = strings.TrimSuffix(name, ".log")
+		default:
 			continue
 		}
 
-		stem := strings.TrimSuffix(name, ".jsonl")
 		fileDate, err := time.Parse("2006-01-02", stem)
 		if err != nil {
 			// Not a date-formatted file, skip it.

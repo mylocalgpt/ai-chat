@@ -2,7 +2,9 @@ package audit
 
 import (
 	"fmt"
+	"os"
 	"sync"
+	"time"
 )
 
 var (
@@ -35,6 +37,17 @@ func CloseGlobal() error {
 		return nil
 	}
 	return defaultLogger.Close()
+}
+
+// OpenDailyLog opens (or creates) a date-stamped log file in dir for use as
+// an slog output destination. The file is named YYYY-MM-DD.log and opened in
+// append mode. Caller is responsible for closing it on shutdown.
+func OpenDailyLog(dir string) (*os.File, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("audit: create log dir: %w", err)
+	}
+	name := time.Now().UTC().Format("2006-01-02") + ".log"
+	return os.OpenFile(dir+"/"+name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 }
 
 // resetGlobal resets the global state for testing. Not exported.
