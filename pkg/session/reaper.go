@@ -168,7 +168,7 @@ func (m *Manager) ReconcileOnStartup(ctx context.Context) (*ReconcileResult, err
 			continue
 		}
 
-		info := m.buildSessionInfoFromSession(&sess)
+		info := m.buildSessionInfoFromSession(ctx, &sess)
 		if !adapter.IsAlive(*info) {
 			if err := m.store.UpdateSessionStatus(ctx, sess.ID, string(core.SessionCrashed)); err != nil {
 				slog.Error("reconcile: failed to mark crashed", "session_id", sess.ID, "error", err)
@@ -227,8 +227,8 @@ func (m *Manager) findOrphanedTmuxSessions(ctx context.Context, activeSessions [
 	return orphaned, nil
 }
 
-func (m *Manager) buildSessionInfoFromSession(sess *core.Session) *core.SessionInfo {
-	ws, err := m.store.GetWorkspaceByID(context.Background(), sess.WorkspaceID)
+func (m *Manager) buildSessionInfoFromSession(ctx context.Context, sess *core.Session) *core.SessionInfo {
+	ws, err := m.store.GetWorkspaceByID(ctx, sess.WorkspaceID)
 	if err != nil {
 		return &core.SessionInfo{
 			Name:      sess.TmuxSession,

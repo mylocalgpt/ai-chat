@@ -174,18 +174,22 @@ func runStart(args []string) {
 	// Consume response events from session manager and send to Telegram.
 	go func() {
 		for event := range sessMgr.ResponseCh() {
-			_ = tg.Send(ctx, core.OutboundMessage{
+			if err := tg.Send(ctx, core.OutboundMessage{
 				Channel:     event.Channel,
 				RecipientID: event.SenderID,
 				Content:     event.Content,
-			})
-			_ = st.CreateMessage(ctx, &core.Message{
+			}); err != nil {
+				slog.Warn("failed to send response event", "error", err)
+			}
+			if err := st.CreateMessage(ctx, &core.Message{
 				Channel:   event.Channel,
 				SenderID:  event.SenderID,
 				Content:   event.Content,
 				Direction: core.OutboundDirection,
 				Status:    core.StatusDone,
-			})
+			}); err != nil {
+				slog.Warn("failed to persist response event", "error", err)
+			}
 		}
 	}()
 
