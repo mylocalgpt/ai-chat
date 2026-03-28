@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/mylocalgpt/ai-chat/pkg/audit"
@@ -16,8 +15,7 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
-	mcppkg "github.com/mylocalgpt/ai-chat/pkg/mcp"
-	"github.com/mylocalgpt/ai-chat/pkg/orchestrator"
+	"github.com/mylocalgpt/ai-chat/pkg/router"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
@@ -90,30 +88,8 @@ func runStart(args []string) {
 		os.Exit(1)
 	}
 
-	// Create MCP server with executor.
-	mcpCfg := &mcppkg.ServerConfig{AllowedUsers: cfg.Telegram.AllowedUsers}
-	mcpSrv := mcppkg.NewServer(st, mcpCfg, mcppkg.WithExecutor(exec))
-
-	// Connect in-process MCP session.
-	mcpSession, err := mcpSrv.ConnectInProcess(context.Background())
-	if err != nil {
-		slog.Error("failed to connect in-process MCP", "error", err)
-		os.Exit(1)
-	}
-	defer func() { _ = mcpSession.Close() }()
-
-	// Initialize orchestrator (only if OpenRouter key is configured).
-	var orch *orchestrator.Orchestrator
-	if cfg.OpenRouter.APIKey != "" {
-		router := orchestrator.NewRouter(cfg.OpenRouter.APIKey)
-		orch = orchestrator.NewOrchestrator(router, mcpSession, "google/gemini-2.5-flash")
-		if err := orch.Init(context.Background()); err != nil {
-			slog.Error("failed to init orchestrator", "error", err)
-			os.Exit(1)
-		}
-	} else {
-		slog.Warn("openrouter.api_key not set, orchestrator disabled")
-	}
+	// Initialize slash command router.
+	cmdRouter := router.NewRouter(st, nil) // sessionMgr wired in Phase 5
 
 	// Initialize Telegram adapter.
 	tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
@@ -141,21 +117,9 @@ func runStart(args []string) {
 				log.Warn("failed to persist inbound message", "error", err)
 			}
 
-			if orch == nil {
-				_ = send(ctx, core.OutboundMessage{
-					Channel:     msg.Channel,
-					RecipientID: msg.SenderID,
-					Content:     "Orchestrator not configured. Set openrouter.api_key in config.",
-				})
-				return
-			}
-
-			// Build user context string.
-			userContext := buildUserContext(ctx, st, msg.SenderID, msg.Channel)
-
-			response, err := orch.HandleMessage(ctx, msg, userContext)
+			response, err := cmdRouter.Route(ctx, msg)
 			if err != nil {
-				log.Error("orchestrator failed", "error", err)
+				log.Error("router failed", "error", err)
 				_ = send(ctx, core.OutboundMessage{
 					Channel:     msg.Channel,
 					RecipientID: msg.SenderID,
@@ -207,49 +171,4 @@ func runStart(args []string) {
 	_ = tg.Stop()
 	_ = st.Close()
 	_ = audit.CloseGlobal()
-}
-
-// buildUserContext queries the store for the user's active workspace and
-// available workspaces, then formats them as a string for the LLM system prompt.
-func buildUserContext(ctx context.Context, st *store.Store, senderID, channel string) string {
-	var b strings.Builder
-
-	if home, err := os.UserHomeDir(); err == nil {
-		b.WriteString("Home directory: ")
-		b.WriteString(home)
-		b.WriteString("\n")
-	}
-
-	b.WriteString("Current workspace: ")
-	uc, err := st.GetUserContext(ctx, senderID, channel)
-	if err == nil && uc.ActiveWorkspaceID > 0 {
-		ws, err := st.GetWorkspaceByID(ctx, uc.ActiveWorkspaceID)
-		if err == nil {
-			b.WriteString(ws.Name)
-			b.WriteString(" (")
-			b.WriteString(ws.Path)
-			b.WriteString(")")
-		} else {
-			b.WriteString("none")
-		}
-	} else {
-		b.WriteString("none")
-	}
-
-	b.WriteString("\nAvailable workspaces: ")
-	workspaces, err := st.ListWorkspaces(ctx)
-	if err == nil && len(workspaces) > 0 {
-		for i, w := range workspaces {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(w.Name)
-			b.WriteString(": ")
-			b.WriteString(w.Path)
-		}
-	} else {
-		b.WriteString("none")
-	}
-
-	return b.String()
 }
