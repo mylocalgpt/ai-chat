@@ -74,6 +74,7 @@ type UserContext struct {
 	SenderID          string
 	Channel           string
 	ActiveWorkspaceID int64
+	ActiveSessionID   *int64
 	UpdatedAt         time.Time
 }
 
@@ -104,3 +105,12 @@ const (
 	SessionCrashed SessionStatus = "crashed"
 	SessionExpired SessionStatus = "expired"
 )
+
+// ResponseEvent represents a response from an agent session.
+type ResponseEvent struct {
+	SessionName string
+	SessionID   int64
+	SenderID    string
+	Channel     string
+	Content     string
+}

@@ -174,6 +174,80 @@ func (s *Store) getSessionByID(ctx context.Context, id int64) (*core.Session, er
 	return sess, nil
 }
 
+// GetSessionByID fetches a session by its ID.
+func (s *Store) GetSessionByID(ctx context.Context, id int64) (*core.Session, error) {
+	return s.getSessionByID(ctx, id)
+}
+
+// ListActiveSessionsForWorkspace returns all active sessions for a workspace.
+func (s *Store) ListActiveSessionsForWorkspace(ctx context.Context, workspaceID int64) ([]core.Session, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, workspace_id, agent, slug, agent_session_id, tmux_session, status, started_at, last_activity
+		 FROM sessions WHERE workspace_id = ? AND status = 'active'
+		 ORDER BY started_at DESC`,
+		workspaceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing active sessions for workspace %d: %w", workspaceID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	sessions := []core.Session{}
+	for rows.Next() {
+		var sess core.Session
+		var tmuxSession sql.NullString
+		var startedAt string
+		var lastActivity sql.NullString
+
+		err := rows.Scan(
+			&sess.ID, &sess.WorkspaceID, &sess.Agent, &sess.Slug, &sess.AgentSessionID,
+			&tmuxSession, &sess.Status, &startedAt, &lastActivity,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scanning session: %w", err)
+		}
+
+		if tmuxSession.Valid {
+			sess.TmuxSession = tmuxSession.String
+		}
+		sess.StartedAt = parseTime(startedAt)
+		if lastActivity.Valid {
+			sess.LastActivity = parseTime(lastActivity.String)
+		}
+		sessions = append(sessions, sess)
+	}
+	return sessions, rows.Err()
+}
+
+// CountActiveSessionsForWorkspace returns the count of active sessions for a workspace.
+func (s *Store) CountActiveSessionsForWorkspace(ctx context.Context, workspaceID int64) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sessions WHERE workspace_id = ? AND status = 'active'`,
+		workspaceID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting active sessions for workspace %d: %w", workspaceID, err)
+	}
+	return count, nil
+}
+
+// GetSessionByTmuxSession finds a session by its tmux session name.
+func (s *Store) GetSessionByTmuxSession(ctx context.Context, tmuxSession string) (*core.Session, error) {
+	sess, err := s.scanSession(s.db.QueryRowContext(ctx,
+		`SELECT id, workspace_id, agent, slug, agent_session_id, tmux_session, status, started_at, last_activity
+		 FROM sessions WHERE tmux_session = ?`,
+		tmuxSession,
+	))
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("session tmux_session=%q: %w", tmuxSession, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting session by tmux session: %w", err)
+	}
+	return sess, nil
+}
+
 func (s *Store) scanSession(row *sql.Row) (*core.Session, error) {
 	var sess core.Session
 	var tmuxSession sql.NullString

@@ -1,0 +1,541 @@
+package session
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/mylocalgpt/ai-chat/pkg/core"
+	"github.com/mylocalgpt/ai-chat/pkg/executor"
+)
+
+type mockStore struct {
+	userContext         *core.UserContext
+	userContextErr      error
+	workspace           *core.Workspace
+	workspaceErr        error
+	session             *core.Session
+	sessionErr          error
+	sessions            []core.Session
+	sessionsErr         error
+	count               int
+	countErr            error
+	setActiveSessionErr error
+	clearActiveSession  error
+	updateStatusErr     error
+	touchErr            error
+	createSessionErr    error
+	updateMetadataErr   error
+}
+
+func (m *mockStore) GetUserContext(_ context.Context, _, _ string) (*core.UserContext, error) {
+	return m.userContext, m.userContextErr
+}
+
+func (m *mockStore) GetUserContextBySession(_ context.Context, _ int64) (*core.UserContext, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockStore) SetActiveWorkspace(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
+
+func (m *mockStore) SetActiveSession(_ context.Context, _, _ string, _ int64) error {
+	return m.setActiveSessionErr
+}
+
+func (m *mockStore) ClearActiveSession(_ context.Context, _, _ string) error {
+	return m.clearActiveSession
+}
+
+func (m *mockStore) GetWorkspaceByID(_ context.Context, _ int64) (*core.Workspace, error) {
+	return m.workspace, m.workspaceErr
+}
+
+func (m *mockStore) GetWorkspaceByName(_ context.Context, _ string) (*core.Workspace, error) {
+	return m.workspace, m.workspaceErr
+}
+
+func (m *mockStore) GetWorkspaceByAlias(_ context.Context, _ string) (*core.Workspace, error) {
+	return m.workspace, m.workspaceErr
+}
+
+func (m *mockStore) GetSessionByID(_ context.Context, _ int64) (*core.Session, error) {
+	return m.session, m.sessionErr
+}
+
+func (m *mockStore) GetSessionByTmuxSession(_ context.Context, _ string) (*core.Session, error) {
+	return m.session, m.sessionErr
+}
+
+func (m *mockStore) GetActiveSession(_ context.Context, _ int64) (*core.Session, error) {
+	return m.session, m.sessionErr
+}
+
+func (m *mockStore) CreateSession(_ context.Context, _ int64, _, _, _ string) (*core.Session, error) {
+	if m.createSessionErr != nil {
+		return nil, m.createSessionErr
+	}
+	return m.session, nil
+}
+
+func (m *mockStore) UpdateSessionStatus(_ context.Context, _ int64, _ string) error {
+	return m.updateStatusErr
+}
+
+func (m *mockStore) TouchSession(_ context.Context, _ int64) error {
+	return m.touchErr
+}
+
+func (m *mockStore) ListSessions(_ context.Context) ([]core.Session, error) {
+	return m.sessions, m.sessionsErr
+}
+
+func (m *mockStore) ListActiveSessionsForWorkspace(_ context.Context, _ int64) ([]core.Session, error) {
+	return m.sessions, m.sessionsErr
+}
+
+func (m *mockStore) CountActiveSessionsForWorkspace(_ context.Context, _ int64) (int, error) {
+	return m.count, m.countErr
+}
+
+func (m *mockStore) UpdateWorkspaceMetadata(_ context.Context, _ int64, _ json.RawMessage) error {
+	return m.updateMetadataErr
+}
+
+type mockAdapter struct {
+	name     string
+	isAlive  bool
+	spawnErr error
+	sendErr  error
+	stopErr  error
+}
+
+func (m *mockAdapter) Name() string {
+	return m.name
+}
+
+func (m *mockAdapter) Spawn(_ context.Context, _ core.SessionInfo) error {
+	return m.spawnErr
+}
+
+func (m *mockAdapter) Send(_ context.Context, _ core.SessionInfo, _ string) error {
+	return m.sendErr
+}
+
+func (m *mockAdapter) IsAlive(_ core.SessionInfo) bool {
+	return m.isAlive
+}
+
+func (m *mockAdapter) Stop(_ context.Context, _ core.SessionInfo) error {
+	return m.stopErr
+}
+
+type mockRegistry struct {
+	adapters map[string]executor.AgentAdapter
+	agents   []string
+}
+
+func (m *mockRegistry) GetAdapter(agent string) (executor.AgentAdapter, error) {
+	a, ok := m.adapters[agent]
+	if !ok {
+		return nil, errors.New("adapter not found")
+	}
+	return a, nil
+}
+
+func (m *mockRegistry) KnownAgents() []string {
+	return m.agents
+}
+
+func TestNewManager_AppliesDefaults(t *testing.T) {
+	store := &mockStore{}
+	registry := &mockRegistry{adapters: make(map[string]executor.AgentAdapter), agents: []string{"opencode"}}
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	if m.cfg.SoftIdleTimeout != 30*time.Minute {
+		t.Errorf("expected SoftIdleTimeout 30m, got %v", m.cfg.SoftIdleTimeout)
+	}
+	if m.cfg.HardIdleTimeout != 2*time.Hour {
+		t.Errorf("expected HardIdleTimeout 2h, got %v", m.cfg.HardIdleTimeout)
+	}
+	if m.cfg.ReaperInterval != 5*time.Minute {
+		t.Errorf("expected ReaperInterval 5m, got %v", m.cfg.ReaperInterval)
+	}
+}
+
+func TestGetOrCreateActiveSession_CreatesNewWhenNone(t *testing.T) {
+	sessionID := int64(42)
+	store := &mockStore{
+		userContext: &core.UserContext{
+			SenderID:          "user1",
+			Channel:           "telegram",
+			ActiveWorkspaceID: 1,
+		},
+		workspace: &core.Workspace{
+			ID:   1,
+			Name: "lab",
+			Path: "/path/to/lab",
+		},
+		session: &core.Session{
+			ID:          sessionID,
+			WorkspaceID: 1,
+			Agent:       "opencode",
+			TmuxSession: "ai-chat-lab-a3f2",
+			Slug:        "a3f2",
+		},
+	}
+
+	adapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"opencode": adapter},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	sess, info, err := m.GetOrCreateActiveSession(context.Background(), "user1", "telegram")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sess == nil {
+		t.Fatal("expected session, got nil")
+	}
+	if info == nil {
+		t.Fatal("expected session info, got nil")
+	}
+	if info.Workspace != "lab" {
+		t.Errorf("expected workspace 'lab', got %q", info.Workspace)
+	}
+}
+
+func TestGetOrCreateActiveSession_ReusesExisting(t *testing.T) {
+	sessionID := int64(42)
+	store := &mockStore{
+		userContext: &core.UserContext{
+			SenderID:          "user1",
+			Channel:           "telegram",
+			ActiveWorkspaceID: 1,
+			ActiveSessionID:   &sessionID,
+		},
+		workspace: &core.Workspace{
+			ID:   1,
+			Name: "lab",
+			Path: "/path/to/lab",
+		},
+		session: &core.Session{
+			ID:          sessionID,
+			WorkspaceID: 1,
+			Agent:       "opencode",
+			TmuxSession: "ai-chat-lab-a3f2",
+			Slug:        "a3f2",
+		},
+	}
+
+	adapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"opencode": adapter},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	sess, _, err := m.GetOrCreateActiveSession(context.Background(), "user1", "telegram")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sess.ID != sessionID {
+		t.Errorf("expected session ID %d, got %d", sessionID, sess.ID)
+	}
+}
+
+func TestGetOrCreateActiveSession_CreatesNewWhenDead(t *testing.T) {
+	oldSessionID := int64(42)
+	newSessionID := int64(99)
+	store := &mockStore{
+		userContext: &core.UserContext{
+			SenderID:          "user1",
+			Channel:           "telegram",
+			ActiveWorkspaceID: 1,
+			ActiveSessionID:   &oldSessionID,
+		},
+		workspace: &core.Workspace{
+			ID:   1,
+			Name: "lab",
+			Path: "/path/to/lab",
+		},
+		session: &core.Session{
+			ID:          newSessionID,
+			WorkspaceID: 1,
+			Agent:       "opencode",
+			TmuxSession: "ai-chat-lab-b4c5",
+			Slug:        "b4c5",
+		},
+	}
+
+	adapter := &mockAdapter{name: "opencode", isAlive: false}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"opencode": adapter},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	sess, _, err := m.GetOrCreateActiveSession(context.Background(), "user1", "telegram")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sess.ID != newSessionID {
+		t.Errorf("expected new session ID %d, got %d", newSessionID, sess.ID)
+	}
+}
+
+func TestClearSession_AdapterAware(t *testing.T) {
+	sessionID := int64(42)
+	store := &mockStore{
+		userContext: &core.UserContext{
+			SenderID:          "user1",
+			Channel:           "telegram",
+			ActiveWorkspaceID: 1,
+			ActiveSessionID:   &sessionID,
+		},
+		workspace: &core.Workspace{
+			ID:   1,
+			Name: "lab",
+			Path: "/path/to/lab",
+		},
+		session: &core.Session{
+			ID:          sessionID,
+			WorkspaceID: 1,
+			Agent:       "opencode",
+			TmuxSession: "ai-chat-lab-a3f2",
+			Slug:        "a3f2",
+		},
+	}
+
+	adapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"opencode": adapter},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	info, err := m.ClearSession(context.Background(), "user1", "telegram")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("expected session info, got nil")
+	}
+}
+
+func TestClearSession_CopilotStateless(t *testing.T) {
+	sessionID := int64(42)
+	store := &mockStore{
+		userContext: &core.UserContext{
+			SenderID:          "user1",
+			Channel:           "telegram",
+			ActiveWorkspaceID: 1,
+			ActiveSessionID:   &sessionID,
+		},
+		workspace: &core.Workspace{
+			ID:   1,
+			Name: "lab",
+			Path: "/path/to/lab",
+		},
+		session: &core.Session{
+			ID:          sessionID,
+			WorkspaceID: 1,
+			Agent:       "copilot",
+			TmuxSession: "ai-chat-lab-a3f2",
+			Slug:        "a3f2",
+		},
+	}
+
+	adapter := &mockAdapter{name: "copilot", isAlive: true}
+	opencodeAdapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{
+			"copilot":  adapter,
+			"opencode": opencodeAdapter,
+		},
+		agents: []string{"copilot", "opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	info, err := m.ClearSession(context.Background(), "user1", "telegram")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("expected session info, got nil")
+	}
+}
+
+func TestKillSession(t *testing.T) {
+	sessionID := int64(42)
+	store := &mockStore{
+		userContext: &core.UserContext{
+			SenderID:          "user1",
+			Channel:           "telegram",
+			ActiveWorkspaceID: 1,
+			ActiveSessionID:   &sessionID,
+		},
+		workspace: &core.Workspace{
+			ID:   1,
+			Name: "lab",
+			Path: "/path/to/lab",
+		},
+		session: &core.Session{
+			ID:          sessionID,
+			WorkspaceID: 1,
+			Agent:       "opencode",
+			TmuxSession: "ai-chat-lab-a3f2",
+			Slug:        "a3f2",
+		},
+	}
+
+	adapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"opencode": adapter},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	err := m.KillSession(context.Background(), "user1", "telegram")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSetAgent_UnknownAgent(t *testing.T) {
+	store := &mockStore{
+		userContext: &core.UserContext{
+			SenderID:          "user1",
+			Channel:           "telegram",
+			ActiveWorkspaceID: 1,
+		},
+		workspace: &core.Workspace{
+			ID:   1,
+			Name: "lab",
+			Path: "/path/to/lab",
+		},
+	}
+
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	err := m.SetAgent(context.Background(), "user1", "telegram", "unknown")
+	if err == nil {
+		t.Fatal("expected error for unknown agent")
+	}
+}
+
+func TestSetAgent_KillsDifferentAgentSession(t *testing.T) {
+	sessionID := int64(42)
+	store := &mockStore{
+		userContext: &core.UserContext{
+			SenderID:          "user1",
+			Channel:           "telegram",
+			ActiveWorkspaceID: 1,
+			ActiveSessionID:   &sessionID,
+		},
+		workspace: &core.Workspace{
+			ID:       1,
+			Name:     "lab",
+			Path:     "/path/to/lab",
+			Metadata: json.RawMessage(`{}`),
+		},
+		session: &core.Session{
+			ID:          sessionID,
+			WorkspaceID: 1,
+			Agent:       "opencode",
+			TmuxSession: "ai-chat-lab-a3f2",
+			Slug:        "a3f2",
+		},
+	}
+
+	opencodeAdapter := &mockAdapter{name: "opencode", isAlive: true}
+	copilotAdapter := &mockAdapter{name: "copilot", isAlive: true}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{
+			"opencode": opencodeAdapter,
+			"copilot":  copilotAdapter,
+		},
+		agents: []string{"copilot", "opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	err := m.SetAgent(context.Background(), "user1", "telegram", "copilot")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetStatus(t *testing.T) {
+	sessionID := int64(42)
+	store := &mockStore{
+		userContext: &core.UserContext{
+			SenderID:          "user1",
+			Channel:           "telegram",
+			ActiveWorkspaceID: 1,
+			ActiveSessionID:   &sessionID,
+		},
+		workspace: &core.Workspace{
+			ID:   1,
+			Name: "lab",
+			Path: "/path/to/lab",
+		},
+		session: &core.Session{
+			ID:          sessionID,
+			WorkspaceID: 1,
+			Agent:       "opencode",
+			TmuxSession: "ai-chat-lab-a3f2",
+			Slug:        "a3f2",
+		},
+		count: 3,
+	}
+
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	info, err := m.GetStatus(context.Background(), "user1", "telegram")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.Workspace.Name != "lab" {
+		t.Errorf("expected workspace 'lab', got %q", info.Workspace.Name)
+	}
+	if info.SessionCount != 3 {
+		t.Errorf("expected session count 3, got %d", info.SessionCount)
+	}
+}
+
+func TestResponseCh(t *testing.T) {
+	store := &mockStore{}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	ch := m.ResponseCh()
+	if ch == nil {
+		t.Fatal("expected response channel, got nil")
+	}
+}

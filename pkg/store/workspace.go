@@ -128,6 +128,16 @@ func (s *Store) FindWorkspaceByAlias(ctx context.Context, alias string) (*core.W
 	return w, nil
 }
 
+// GetWorkspaceByName fetches a workspace by name. Alias for GetWorkspace.
+func (s *Store) GetWorkspaceByName(ctx context.Context, name string) (*core.Workspace, error) {
+	return s.GetWorkspace(ctx, name)
+}
+
+// GetWorkspaceByAlias fetches a workspace by alias. Alias for FindWorkspaceByAlias.
+func (s *Store) GetWorkspaceByAlias(ctx context.Context, alias string) (*core.Workspace, error) {
+	return s.FindWorkspaceByAlias(ctx, alias)
+}
+
 // scanWorkspace scans a single row into a Workspace.
 func (s *Store) scanWorkspace(row *sql.Row) (*core.Workspace, error) {
 	var w core.Workspace

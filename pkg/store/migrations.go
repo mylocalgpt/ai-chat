@@ -12,6 +12,7 @@ var migrations = []func(*sql.Tx) error{
 	migration001,
 	migration002,
 	migration003,
+	migration004,
 }
 
 // Migrate runs all pending migrations against the database.
@@ -155,6 +156,15 @@ func migration003(tx *sql.Tx) error {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("executing %q: %w", stmt[:40], err)
 		}
+	}
+	return nil
+}
+
+// migration004 adds active_session_id column to user_context.
+func migration004(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE user_context ADD COLUMN active_session_id INTEGER REFERENCES sessions(id)`)
+	if err != nil {
+		return fmt.Errorf("executing migration004: %w", err)
 	}
 	return nil
 }

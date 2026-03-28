@@ -2,6 +2,6 @@
 
 Chat with & control AI Agents via telegram, chat UI & voice.
 
-> **Note:** Claude Code will not be supported (first class support for OpenCode, Copilot, Codex intended)
+> **Note:** Claude Code will not be supported (first class support for OpenCode, Copilot, Codex intended via CLI)
 
 Work in progress.
