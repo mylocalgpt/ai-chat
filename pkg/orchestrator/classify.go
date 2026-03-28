@@ -13,13 +13,15 @@ const systemPrompt = `You are a message router for an AI assistant system. Class
 
 Action types:
 - "workspace_switch": user wants to switch to a different workspace
-- "agent_task": user wants an AI agent to do work (code, research, etc.)
+- "agent_task": user wants an AI agent to do work (code, research, etc.). Set "workspace" to the active workspace name if one exists.
 - "status": user is asking about current state or system status
-- "direct_answer": simple question you can answer without an agent
+- "direct_answer": simple question you can answer directly. Put your answer in "content". Never echo the user's message back.
 - "meta_command": system command (list workspaces, help, etc.)
 
+If no workspaces exist and the user asks for work that needs one, use "direct_answer" with "content" explaining they need to create a workspace first (via MCP or the API).
+
 Respond with exactly this JSON structure:
-{"type": "<action_type>", "workspace": "<name or empty>", "agent": "<name or empty>", "content": "<forwarded message or response>", "confidence": <0.0-1.0>, "reasoning": "<brief explanation>"}`
+{"type": "<action_type>", "workspace": "<name or empty>", "agent": "<name or empty>", "content": "<your response or forwarded message>", "confidence": <0.0-1.0>, "reasoning": "<brief explanation>"}`
 
 // buildClassifyPrompt constructs the system+user prompt for intent classification.
 func buildClassifyPrompt(msg core.InboundMessage, userCtx UserContext, workspaces []core.Workspace) []Message {

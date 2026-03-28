@@ -19,6 +19,9 @@ func (o *Orchestrator) HandleAction(ctx context.Context, msg core.InboundMessage
 	case ActionStatus:
 		return o.handleStatus(ctx, msg)
 	case ActionDirectAnswer:
+		if action.Content == "" {
+			return "I'm not sure how to help with that. Try asking about your workspaces or giving me a task to work on.", nil
+		}
 		return action.Content, nil
 	case ActionAgentTask:
 		return "", nil
