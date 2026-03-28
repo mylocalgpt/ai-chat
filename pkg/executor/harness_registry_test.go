@@ -8,7 +8,7 @@ func TestRegistryGetTmux(t *testing.T) {
 	r := NewHarnessRegistry(NewTmux())
 
 	// Known tmux agents should return a harness.
-	for _, agent := range []string{"claude", "opencode"} {
+	for _, agent := range []string{"opencode"} {
 		h, err := r.GetTmux(agent)
 		if err != nil {
 			t.Errorf("GetTmux(%q) unexpected error: %v", agent, err)
@@ -28,17 +28,8 @@ func TestRegistryGetTmux(t *testing.T) {
 func TestRegistryGetCLI(t *testing.T) {
 	r := NewHarnessRegistry(NewTmux())
 
-	// Known CLI agent should return a harness.
-	h, err := r.GetCLI("claude-oneshot")
-	if err != nil {
-		t.Errorf("GetCLI(claude-oneshot) unexpected error: %v", err)
-	}
-	if h == nil {
-		t.Error("GetCLI(claude-oneshot) returned nil harness")
-	}
-
 	// Unknown agent should return error.
-	_, err = r.GetCLI("unknown")
+	_, err := r.GetCLI("unknown")
 	if err == nil {
 		t.Error("GetCLI(unknown) expected error, got nil")
 	}
@@ -57,9 +48,7 @@ func TestRegistryIsTmux(t *testing.T) {
 		agent string
 		want  bool
 	}{
-		{"claude", true},
 		{"opencode", true},
-		{"claude-oneshot", false},
 		{"copilot", false},
 		{"unknown", false},
 	}
@@ -77,8 +66,8 @@ func TestRegistryKnownAgents(t *testing.T) {
 	r := NewHarnessRegistry(NewTmux())
 	agents := r.KnownAgents()
 
-	// Should include claude, claude-oneshot, opencode (sorted).
-	want := []string{"claude", "claude-oneshot", "opencode"}
+	// Should include opencode (sorted).
+	want := []string{"opencode"}
 	if len(agents) != len(want) {
 		t.Fatalf("KnownAgents() = %v, want %v", agents, want)
 	}

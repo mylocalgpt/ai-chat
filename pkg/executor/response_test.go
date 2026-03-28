@@ -17,7 +17,7 @@ func testSessionInfo() core.SessionInfo {
 		Slug:          "a3f2",
 		Workspace:     "lab",
 		WorkspacePath: "/tmp/lab",
-		Agent:         "claude",
+		Agent:         "opencode",
 	}
 }
 
@@ -46,8 +46,8 @@ func TestNewResponseFileCreatesValidJSON(t *testing.T) {
 	if rf.Workspace != "lab" {
 		t.Errorf("workspace = %q, want %q", rf.Workspace, "lab")
 	}
-	if rf.Agent != "claude" {
-		t.Errorf("agent = %q, want %q", rf.Agent, "claude")
+	if rf.Agent != "opencode" {
+		t.Errorf("agent = %q, want %q", rf.Agent, "opencode")
 	}
 	if rf.Created.IsZero() {
 		t.Error("created should not be zero")

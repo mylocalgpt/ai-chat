@@ -395,7 +395,7 @@ func TestWorkspaceRegisterWithMetadata(t *testing.T) {
 		Name:         "proj",
 		Path:         dir,
 		Description:  "my project",
-		DefaultAgent: "claude",
+		DefaultAgent: "opencode",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -407,7 +407,7 @@ func TestWorkspaceRegisterWithMetadata(t *testing.T) {
 	if m["description"] != "my project" {
 		t.Errorf("expected description 'my project', got %v", m["description"])
 	}
-	if m["default_agent"] != "claude" {
-		t.Errorf("expected default_agent 'claude', got %v", m["default_agent"])
+	if m["default_agent"] != "opencode" {
+		t.Errorf("expected default_agent 'opencode', got %v", m["default_agent"])
 	}
 }

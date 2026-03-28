@@ -41,8 +41,8 @@ func (s *trackingStore) TouchSession(_ context.Context, id int64) error {
 func TestReconcileMarksCrashedSessions(t *testing.T) {
 	st := newTrackingStore()
 	st.sessions = []*core.Session{
-		{ID: 1, WorkspaceID: 1, Agent: "claude", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
-		{ID: 2, WorkspaceID: 2, Agent: "claude", Slug: "c3d4", TmuxSession: "ai-chat-other-c3d4", Status: string(core.SessionActive)},
+		{ID: 1, WorkspaceID: 1, Agent: "opencode", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
+		{ID: 2, WorkspaceID: 2, Agent: "opencode", Slug: "c3d4", TmuxSession: "ai-chat-other-c3d4", Status: string(core.SessionActive)},
 	}
 
 	// No live tmux sessions.
@@ -69,7 +69,7 @@ func TestReconcileMarksCrashedSessions(t *testing.T) {
 func TestReconcileKeepsAliveSessions(t *testing.T) {
 	st := newTrackingStore()
 	st.sessions = []*core.Session{
-		{ID: 1, WorkspaceID: 1, Agent: "claude", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
+		{ID: 1, WorkspaceID: 1, Agent: "opencode", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
 	}
 
 	tmx := newMockTmux()
@@ -119,11 +119,11 @@ func TestCleanupKillsStale(t *testing.T) {
 	old := time.Now().Add(-48 * time.Hour)
 	st.sessions = []*core.Session{
 		{
-			ID: 1, WorkspaceID: 1, Agent: "claude",
+			ID: 1, WorkspaceID: 1, Agent: "opencode",
 			TmuxSession:  "ai-chat-proj-a1b2",
-			Status:        string(core.SessionActive),
-			LastActivity:  old,
-			StartedAt:     old,
+			Status:       string(core.SessionActive),
+			LastActivity: old,
+			StartedAt:    old,
 		},
 	}
 
@@ -158,11 +158,11 @@ func TestCleanupSkipsFresh(t *testing.T) {
 	recent := time.Now().Add(-1 * time.Hour)
 	st.sessions = []*core.Session{
 		{
-			ID: 1, WorkspaceID: 1, Agent: "claude",
+			ID: 1, WorkspaceID: 1, Agent: "opencode",
 			TmuxSession:  "ai-chat-proj-a1b2",
-			Status:        string(core.SessionActive),
-			LastActivity:  recent,
-			StartedAt:     recent,
+			Status:       string(core.SessionActive),
+			LastActivity: recent,
+			StartedAt:    recent,
 		},
 	}
 
@@ -190,10 +190,10 @@ func TestCleanupFallsBackToStartedAt(t *testing.T) {
 	old := time.Now().Add(-48 * time.Hour)
 	st.sessions = []*core.Session{
 		{
-			ID: 1, WorkspaceID: 1, Agent: "claude",
+			ID: 1, WorkspaceID: 1, Agent: "opencode",
 			TmuxSession: "ai-chat-proj-a1b2",
-			Status:       string(core.SessionActive),
-			StartedAt:    old,
+			Status:      string(core.SessionActive),
+			StartedAt:   old,
 			// LastActivity is zero (NULL in DB).
 		},
 	}

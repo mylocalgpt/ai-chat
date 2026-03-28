@@ -11,11 +11,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-      - name: Build frontend
-        run: cd web && npm ci && npm run build
       - name: Lint Go
         uses: golangci/golangci-lint-action@v7
         with:

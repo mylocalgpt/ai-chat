@@ -53,7 +53,7 @@ func TestSessionList(t *testing.T) {
 	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
 	ms.workspaces["proj2"] = &core.Workspace{ID: 2, Name: "proj2", Path: "/tmp"}
 	ms.sessions = []core.Session{
-		{ID: 1, WorkspaceID: 1, Agent: "claude", TmuxSession: "proj1-claude", Status: "active", LastActivity: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{ID: 1, WorkspaceID: 1, Agent: "opencode", TmuxSession: "proj1-opencode", Status: "active", LastActivity: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
 		{ID: 2, WorkspaceID: 2, Agent: "opencode", TmuxSession: "proj2-opencode", Status: "idle"},
 	}
 
@@ -100,7 +100,7 @@ func TestSessionRestartNilExecutor(t *testing.T) {
 
 	_, _, err := srv.handleSessionRestart(context.Background(), &gomcp.CallToolRequest{}, SessionRestartInput{
 		WorkspaceName: "test",
-		Agent:         "claude",
+		Agent:         "opencode",
 	})
 	if err == nil {
 		t.Error("expected error for nil executor")
@@ -116,17 +116,17 @@ func TestSessionRestart(t *testing.T) {
 
 	res, _, err := srv.handleSessionRestart(context.Background(), &gomcp.CallToolRequest{}, SessionRestartInput{
 		WorkspaceName: "test",
-		Agent:         "claude",
+		Agent:         "opencode",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(exec.killCalls) != 1 || exec.killCalls[0].workspaceID != 1 || exec.killCalls[0].agent != "claude" {
-		t.Errorf("expected KillSession(1, claude), got %v", exec.killCalls)
+	if len(exec.killCalls) != 1 || exec.killCalls[0].workspaceID != 1 || exec.killCalls[0].agent != "opencode" {
+		t.Errorf("expected KillSession(1, opencode), got %v", exec.killCalls)
 	}
-	if len(exec.spawnCalls) != 1 || exec.spawnCalls[0].workspaceID != 1 || exec.spawnCalls[0].agent != "claude" {
-		t.Errorf("expected SpawnSession(1, claude), got %v", exec.spawnCalls)
+	if len(exec.spawnCalls) != 1 || exec.spawnCalls[0].workspaceID != 1 || exec.spawnCalls[0].agent != "opencode" {
+		t.Errorf("expected SpawnSession(1, opencode), got %v", exec.spawnCalls)
 	}
 	if res == nil {
 		t.Error("expected result")
@@ -140,7 +140,7 @@ func TestSessionRestartMissingWorkspace(t *testing.T) {
 
 	_, _, err := srv.handleSessionRestart(context.Background(), &gomcp.CallToolRequest{}, SessionRestartInput{
 		WorkspaceName: "nope",
-		Agent:         "claude",
+		Agent:         "opencode",
 	})
 	if err == nil {
 		t.Error("expected error for missing workspace")
@@ -191,7 +191,7 @@ func TestSessionKill(t *testing.T) {
 
 	res, _, err := srv.handleSessionKill(context.Background(), &gomcp.CallToolRequest{}, SessionKillInput{
 		WorkspaceName: "test",
-		Agent:         "claude",
+		Agent:         "opencode",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -213,7 +213,7 @@ func TestAgentSend(t *testing.T) {
 
 	res, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{
 		WorkspaceName: "proj1",
-		Agent:         "claude",
+		Agent:         "opencode",
 		Message:       "hello agent",
 	})
 	if err != nil {
@@ -224,7 +224,7 @@ func TestAgentSend(t *testing.T) {
 		t.Fatalf("expected 1 execute call, got %d", len(exec.executeCalls))
 	}
 	call := exec.executeCalls[0]
-	if call.workspaceID != 1 || call.agent != "claude" || call.message != "hello agent" {
+	if call.workspaceID != 1 || call.agent != "opencode" || call.message != "hello agent" {
 		t.Errorf("unexpected execute call: %+v", call)
 	}
 
@@ -239,7 +239,7 @@ func TestAgentSendFallbackAgent(t *testing.T) {
 	exec := &mockExecutor{executeResponse: "ok"}
 	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
 
-	// No default_agent in metadata, no agent in input - should fall back to "claude".
+	// No default_agent in metadata, no agent in input - should fall back to "opencode".
 	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
 
 	_, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{
@@ -250,8 +250,8 @@ func TestAgentSendFallbackAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(exec.executeCalls) != 1 || exec.executeCalls[0].agent != "claude" {
-		t.Errorf("expected fallback to claude, got %+v", exec.executeCalls)
+	if len(exec.executeCalls) != 1 || exec.executeCalls[0].agent != "opencode" {
+		t.Errorf("expected fallback to opencode, got %+v", exec.executeCalls)
 	}
 }
 
@@ -274,7 +274,7 @@ func TestSessionKillNilExecutor(t *testing.T) {
 
 	_, _, err := srv.handleSessionKill(context.Background(), &gomcp.CallToolRequest{}, SessionKillInput{
 		WorkspaceName: "test",
-		Agent:         "claude",
+		Agent:         "opencode",
 	})
 	if err == nil {
 		t.Error("expected error for nil executor")

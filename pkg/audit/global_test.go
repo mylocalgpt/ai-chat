@@ -60,9 +60,9 @@ func TestGlobalIntegration(t *testing.T) {
 	// Log entries of various types.
 	entries := []AuditEntry{
 		Inbound("telegram", "user1", "lab", "hello"),
-		Route("lab", "agent_task", "claude", 0.9),
-		AgentSend("lab", "claude", "sess1", "do task"),
-		AgentResponse("lab", "claude", "sess1", 500, 1200),
+		Route("lab", "agent_task", "opencode", 0.9),
+		AgentSend("lab", "opencode", "sess1", "do task"),
+		AgentResponse("lab", "opencode", "sess1", 500, 1200),
 		Outbound("telegram", "user1", "lab", 200),
 		Health("lab", "active"),
 	}

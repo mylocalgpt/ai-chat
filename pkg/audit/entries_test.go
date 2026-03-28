@@ -34,7 +34,7 @@ func TestInboundEntry(t *testing.T) {
 }
 
 func TestRouteEntry(t *testing.T) {
-	e := Route("lab", "agent_task", "claude", 0.95)
+	e := Route("lab", "agent_task", "opencode", 0.95)
 	if e.Type != "route" {
 		t.Errorf("Type = %q, want %q", e.Type, "route")
 	}
@@ -47,7 +47,7 @@ func TestRouteEntry(t *testing.T) {
 	if e.Action != "agent_task" {
 		t.Errorf("Action = %q", e.Action)
 	}
-	if e.Agent != "claude" {
+	if e.Agent != "opencode" {
 		t.Errorf("Agent = %q", e.Agent)
 	}
 	if e.Confidence != 0.95 {
@@ -56,7 +56,7 @@ func TestRouteEntry(t *testing.T) {
 }
 
 func TestAgentSendEntry(t *testing.T) {
-	e := AgentSend("lab", "claude", "sess1", "do this")
+	e := AgentSend("lab", "opencode", "sess1", "do this")
 	if e.Type != "agent_send" {
 		t.Errorf("Type = %q, want %q", e.Type, "agent_send")
 	}
@@ -72,7 +72,7 @@ func TestAgentSendEntry(t *testing.T) {
 }
 
 func TestAgentResponseEntry(t *testing.T) {
-	e := AgentResponse("lab", "claude", "sess1", 500, 1200)
+	e := AgentResponse("lab", "opencode", "sess1", 500, 1200)
 	if e.Type != "agent_response" {
 		t.Errorf("Type = %q, want %q", e.Type, "agent_response")
 	}

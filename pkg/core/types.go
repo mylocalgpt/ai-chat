@@ -50,7 +50,7 @@ type Workspace struct {
 type Session struct {
 	ID             int64
 	WorkspaceID    int64
-	Agent          string // "claude", "opencode", "copilot"
+	Agent          string // "opencode", "copilot"
 	Slug           string // random 4-char slug
 	AgentSessionID string // agent's own session identifier
 	TmuxSession    string
@@ -65,7 +65,7 @@ type SessionInfo struct {
 	Slug          string // "a3f2"
 	Workspace     string // "lab"
 	WorkspacePath string // "/home/chief/code/research-lab"
-	Agent         string // "claude"
+	Agent         string // "opencode"
 	ResponseFile  string // full path to response JSON
 }
 

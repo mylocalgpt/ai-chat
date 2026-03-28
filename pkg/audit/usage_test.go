@@ -23,11 +23,11 @@ func TestUsageSummaryAggregation(t *testing.T) {
 	today := time.Now().UTC().Format("2006-01-02")
 
 	lines := []string{
-		`{"type":"agent_response","workspace":"lab","agent":"claude","duration_ms":30000}`,
-		`{"type":"agent_response","workspace":"lab","agent":"claude","duration_ms":30000}`,
-		`{"type":"agent_response","workspace":"lab","agent":"opencode","duration_ms":60000}`,
+		`{"type":"agent_response","workspace":"lab","agent":"opencode","duration_ms":30000}`,
+		`{"type":"agent_response","workspace":"lab","agent":"opencode","duration_ms":30000}`,
+		`{"type":"agent_response","workspace":"lab","agent":"copilot","duration_ms":60000}`,
 		`{"type":"inbound","workspace":"lab","channel":"telegram"}`,
-		`{"type":"agent_response","workspace":"prod","agent":"claude","duration_ms":10000}`,
+		`{"type":"agent_response","workspace":"prod","agent":"opencode","duration_ms":10000}`,
 	}
 	writeUsageLog(t, dir, today, lines)
 
@@ -45,11 +45,11 @@ func TestUsageSummaryAggregation(t *testing.T) {
 		t.Errorf("TotalDuration = %v, want %v", u.TotalDuration, expectedDuration)
 	}
 
-	if u.ByAgent["claude"] != 2 {
-		t.Errorf("ByAgent[claude] = %d, want 2", u.ByAgent["claude"])
+	if u.ByAgent["opencode"] != 2 {
+		t.Errorf("ByAgent[opencode] = %d, want 2", u.ByAgent["opencode"])
 	}
-	if u.ByAgent["opencode"] != 1 {
-		t.Errorf("ByAgent[opencode] = %d, want 1", u.ByAgent["opencode"])
+	if u.ByAgent["copilot"] != 1 {
+		t.Errorf("ByAgent[copilot] = %d, want 1", u.ByAgent["copilot"])
 	}
 }
 
@@ -57,9 +57,9 @@ func TestUsageSummaryCostEstimation(t *testing.T) {
 	dir := t.TempDir()
 	today := time.Now().UTC().Format("2006-01-02")
 
-	// claude with exactly 60000ms = 1 minute = $0.05
+	// opencode with exactly 60000ms = 1 minute = $0.02
 	lines := []string{
-		`{"type":"agent_response","workspace":"lab","agent":"claude","duration_ms":60000}`,
+		`{"type":"agent_response","workspace":"lab","agent":"opencode","duration_ms":60000}`,
 	}
 	writeUsageLog(t, dir, today, lines)
 
@@ -68,8 +68,8 @@ func TestUsageSummaryCostEstimation(t *testing.T) {
 		t.Fatalf("UsageSummary: %v", err)
 	}
 
-	if math.Abs(u.EstimatedCost-0.05) > 0.001 {
-		t.Errorf("EstimatedCost = %.4f, want 0.05", u.EstimatedCost)
+	if math.Abs(u.EstimatedCost-0.02) > 0.001 {
+		t.Errorf("EstimatedCost = %.4f, want 0.02", u.EstimatedCost)
 	}
 }
 
@@ -103,9 +103,9 @@ func TestAllUsageSummaries(t *testing.T) {
 	today := time.Now().UTC().Format("2006-01-02")
 
 	lines := []string{
-		`{"type":"agent_response","workspace":"lab","agent":"claude","duration_ms":10000}`,
-		`{"type":"agent_response","workspace":"prod","agent":"claude","duration_ms":20000}`,
-		`{"type":"agent_response","workspace":"lab","agent":"opencode","duration_ms":5000}`,
+		`{"type":"agent_response","workspace":"lab","agent":"opencode","duration_ms":10000}`,
+		`{"type":"agent_response","workspace":"prod","agent":"opencode","duration_ms":20000}`,
+		`{"type":"agent_response","workspace":"lab","agent":"copilot","duration_ms":5000}`,
 	}
 	writeUsageLog(t, dir, today, lines)
 
@@ -161,11 +161,11 @@ func TestUsageSummaryDateFiltering(t *testing.T) {
 
 	// Today's file.
 	writeUsageLog(t, dir, today.Format("2006-01-02"), []string{
-		`{"type":"agent_response","workspace":"lab","agent":"claude","duration_ms":1000}`,
+		`{"type":"agent_response","workspace":"lab","agent":"opencode","duration_ms":1000}`,
 	})
 	// Old file (10 days ago).
 	writeUsageLog(t, dir, oldDate.Format("2006-01-02"), []string{
-		`{"type":"agent_response","workspace":"lab","agent":"claude","duration_ms":5000}`,
+		`{"type":"agent_response","workspace":"lab","agent":"opencode","duration_ms":5000}`,
 	})
 
 	// Only check last 1 day - should only see today's entry.
@@ -194,8 +194,8 @@ func TestUsageStringFormat(t *testing.T) {
 		TotalDuration: 83 * time.Minute,
 		EstimatedCost: 3.15,
 		ByAgent: map[string]int{
-			"claude":   30,
-			"opencode": 12,
+			"opencode": 30,
+			"copilot":  12,
 		},
 	}
 
@@ -212,7 +212,7 @@ func TestUsageStringFormat(t *testing.T) {
 	if !strings.Contains(output, "$3.15") {
 		t.Errorf("missing cost in output:\n%s", output)
 	}
-	if !strings.Contains(output, "claude: 30") {
+	if !strings.Contains(output, "opencode: 30") {
 		t.Errorf("missing agent breakdown in output:\n%s", output)
 	}
 }

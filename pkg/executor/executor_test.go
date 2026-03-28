@@ -118,7 +118,7 @@ func TestExecuteRemoteWorkspaceReturnsError(t *testing.T) {
 	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux()))
 
 	ws := core.Workspace{ID: 1, Name: "remote-proj", Path: "/tmp", Host: "mac"}
-	_, err := exec.Execute(context.Background(), ws, "claude", "hello")
+	_, err := exec.Execute(context.Background(), ws, "opencode", "hello")
 	if !errors.Is(err, ErrRemoteNotSupported) {
 		t.Errorf("expected ErrRemoteNotSupported, got %v", err)
 	}
@@ -153,8 +153,8 @@ func TestSessionInfoEnrichment(t *testing.T) {
 
 	st := newMockStore()
 	st.sessions = []*core.Session{
-		{ID: 1, WorkspaceID: 1, Agent: "claude", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
-		{ID: 2, WorkspaceID: 2, Agent: "claude", Slug: "c3d4", TmuxSession: "ai-chat-old-c3d4", Status: string(core.SessionCrashed)},
+		{ID: 1, WorkspaceID: 1, Agent: "opencode", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
+		{ID: 2, WorkspaceID: 2, Agent: "opencode", Slug: "c3d4", TmuxSession: "ai-chat-old-c3d4", Status: string(core.SessionCrashed)},
 	}
 
 	exec := NewExecutor(st, tmx, NewHarnessRegistry(NewTmux()))
@@ -181,7 +181,7 @@ func TestKillSessionNoActiveSession(t *testing.T) {
 	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux()))
 
 	// Killing a session when none exists should not error.
-	err := exec.KillSession(context.Background(), 999, "claude")
+	err := exec.KillSession(context.Background(), 999, "opencode")
 	if err != nil {
 		t.Errorf("KillSession with no active session: %v", err)
 	}

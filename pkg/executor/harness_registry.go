@@ -17,9 +17,7 @@ func NewHarnessRegistry(tmux *Tmux) *HarnessRegistry {
 		tmuxHarnesses: make(map[string]AgentHarness),
 		cliHarnesses:  make(map[string]CLIHarness),
 	}
-	r.tmuxHarnesses["claude"] = NewClaudeHarness(tmux)
 	r.tmuxHarnesses["opencode"] = NewOpenCodeHarness(tmux)
-	r.cliHarnesses["claude-oneshot"] = NewClaudeOneShotHarness()
 	return r
 }
 

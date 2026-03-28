@@ -22,7 +22,6 @@ type Usage struct {
 // costPerMinute is a rough estimate of cost per minute of agent time.
 // These are estimates only, not precision billing.
 var costPerMinute = map[string]float64{
-	"claude":   0.05,
 	"opencode": 0.02,
 	"copilot":  0.01,
 }

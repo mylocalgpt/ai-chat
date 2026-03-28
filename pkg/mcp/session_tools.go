@@ -40,7 +40,7 @@ type SessionKillInput struct {
 // AgentSendInput is the input for the agent_send tool.
 type AgentSendInput struct {
 	WorkspaceName string `json:"workspace_name" jsonschema:"Name of the workspace to send the message to"`
-	Agent         string `json:"agent,omitempty" jsonschema:"Agent to send to (uses workspace default, then claude)"`
+	Agent         string `json:"agent,omitempty" jsonschema:"Agent to send to (uses workspace default, then opencode)"`
 	Message       string `json:"message" jsonschema:"Message to send to the agent"`
 }
 
@@ -178,8 +178,7 @@ func (s *Server) handleAgentSend(ctx context.Context, _ *gomcp.CallToolRequest, 
 
 	agent, err := s.resolveAgent(input.Agent, ws.Metadata)
 	if err != nil {
-		// Fall back to "claude" when no agent is specified and workspace has no default.
-		agent = "claude"
+		agent = "opencode"
 	}
 
 	response, err := s.executor.Execute(ctx, *ws, agent, input.Message)

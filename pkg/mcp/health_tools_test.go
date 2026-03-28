@@ -38,7 +38,7 @@ func TestHealthCheckHealthy(t *testing.T) {
 
 	ms.workspaces["ws1"] = &core.Workspace{ID: 1, Name: "ws1", Path: "/tmp"}
 	ms.sessions = []core.Session{
-		{ID: 1, WorkspaceID: 1, Agent: "claude", Status: "active"},
+		{ID: 1, WorkspaceID: 1, Agent: "opencode", Status: "active"},
 	}
 
 	res, _, err := srv.handleHealthCheck(context.Background(), &gomcp.CallToolRequest{}, HealthCheckInput{})

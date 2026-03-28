@@ -6,7 +6,7 @@
   "scripts": { "postinstall": "node install.js" },
   "os": ["darwin", "linux", "win32"],
   "cpu": ["x64", "arm64"],
-  "keywords": ["mcp", "ai", "chat", "telegram", "tmux", "claude", "opencode"],
+  "keywords": ["mcp", "ai", "chat", "telegram", "tmux", "opencode"],
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "git+https://github.com/mylocalgpt/ai-chat.git" }
 }
