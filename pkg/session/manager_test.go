@@ -106,11 +106,12 @@ func (m *mockStore) UpdateWorkspaceMetadata(_ context.Context, _ int64, _ json.R
 }
 
 type mockAdapter struct {
-	name     string
-	isAlive  bool
-	spawnErr error
-	sendErr  error
-	stopErr  error
+	name       string
+	isAlive    bool
+	spawnErr   error
+	sendErr    error
+	stopErr    error
+	stopCalled bool
 }
 
 func (m *mockAdapter) Name() string {
@@ -130,6 +131,7 @@ func (m *mockAdapter) IsAlive(_ core.SessionInfo) bool {
 }
 
 func (m *mockAdapter) Stop(_ context.Context, _ core.SessionInfo) error {
+	m.stopCalled = true
 	return m.stopErr
 }
 

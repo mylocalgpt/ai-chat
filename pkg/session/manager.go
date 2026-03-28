@@ -45,6 +45,7 @@ type Manager struct {
 	proxy      *executor.SecurityProxy
 	responseCh chan core.ResponseEvent
 	watcher    *Watcher
+	reaper     *Reaper
 	cfg        ManagerConfig
 	mu         sync.Mutex
 }
@@ -72,6 +73,11 @@ func NewManager(store sessionStore, adapters AdapterRegistry, proxy *executor.Se
 
 	responseCh := make(chan core.ResponseEvent, 100)
 	watcher := NewWatcher(cfg.ResponsesDir, responseCh, store)
+	reaper := NewReaper(store, adapters, ReaperConfig{
+		SoftIdleTimeout: cfg.SoftIdleTimeout,
+		HardIdleTimeout: cfg.HardIdleTimeout,
+		Interval:        cfg.ReaperInterval,
+	})
 
 	return &Manager{
 		store:      store,
@@ -79,6 +85,7 @@ func NewManager(store sessionStore, adapters AdapterRegistry, proxy *executor.Se
 		proxy:      proxy,
 		responseCh: responseCh,
 		watcher:    watcher,
+		reaper:     reaper,
 		cfg:        cfg,
 	}
 }
@@ -373,7 +380,28 @@ func (m *Manager) ResponseCh() <-chan core.ResponseEvent {
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	return m.watcher.Run(ctx)
+	if _, err := m.ReconcileOnStartup(ctx); err != nil {
+		slog.Warn("startup reconciliation failed", "error", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		if err := m.watcher.Run(ctx); err != nil && err != ctx.Err() {
+			slog.Warn("watcher exited with error", "error", err)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		m.reaper.Run(ctx)
+	}()
+
+	<-ctx.Done()
+	wg.Wait()
+	return ctx.Err()
 }
 
 func (m *Manager) buildSessionInfo(ws *core.Workspace, sess *core.Session) *core.SessionInfo {

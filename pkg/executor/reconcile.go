@@ -8,6 +8,10 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
 
+// Deprecated: Use session.Manager.ReconcileOnStartup instead.
+// This file is kept for reference but the reconciliation logic has moved
+// to the session manager package.
+
 // ReconcileResult holds the outcome of a startup reconciliation.
 type ReconcileResult struct {
 	Reconciled int // sessions that were alive and updated
