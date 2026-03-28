@@ -28,7 +28,7 @@ func runAudit(args []string) {
 func runAuditCheck(args []string) {
 	fs := flag.NewFlagSet("audit check", flag.ExitOnError)
 	days := fs.Int("days", 1, "number of days to check")
-	logDir := fs.String("log-dir", "", "log directory (default ~/.ai-chat/logs/)")
+	logDir := fs.String("log-dir", "", "log directory (default ~/.config/ai-chat/logs/)")
 	_ = fs.Parse(args)
 
 	dir := *logDir
@@ -38,7 +38,7 @@ func runAuditCheck(args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		dir = filepath.Join(home, ".ai-chat", "logs")
+		dir = filepath.Join(home, ".config", "ai-chat", "logs")
 	}
 
 	result, err := audit.RunAuditCheck(dir, *days)
@@ -54,7 +54,7 @@ func runAuditUsage(args []string) {
 	fs := flag.NewFlagSet("audit usage", flag.ExitOnError)
 	workspace := fs.String("workspace", "", "filter by workspace name (default: all)")
 	days := fs.Int("days", 7, "number of days to aggregate")
-	logDir := fs.String("log-dir", "", "log directory (default ~/.ai-chat/logs/)")
+	logDir := fs.String("log-dir", "", "log directory (default ~/.config/ai-chat/logs/)")
 	_ = fs.Parse(args)
 
 	dir := *logDir
@@ -64,7 +64,7 @@ func runAuditUsage(args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		dir = filepath.Join(home, ".ai-chat", "logs")
+		dir = filepath.Join(home, ".config", "ai-chat", "logs")
 	}
 
 	if *workspace != "" {

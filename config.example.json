@@ -6,7 +6,7 @@
   "openrouter": {
     "api_key": "your-openrouter-api-key"
   },
-  "db_path": "~/.ai-chat/state.db",
-  "log_dir": "~/.ai-chat/logs/",
+  "db_path": "~/.config/ai-chat/state.db",
+  "log_dir": "~/.config/ai-chat/logs/",
   "http_addr": "127.0.0.1:8080"
 }

@@ -1,82 +1,52 @@
 # ai-chat
 
-A local-first AI chat system that routes messages from Telegram and a browser UI to AI agents (Claude, OpenCode, Copilot) running in tmux sessions on your machine.
-
-It keeps everything on your hardware: SQLite for state, JSONL for audit logs, and direct tmux sessions for agent interaction.
+Chat with AI agents on your machine through Telegram or a browser. Messages are routed to Claude, OpenCode, or Copilot running in tmux sessions, with everything stored locally.
 
 ## Quick Start
 
-**Prerequisites:** Go 1.23+, Node.js 20+, tmux
+**Prerequisites:** Node.js 18+, tmux
 
-1. Clone and build:
-   ```bash
-   git clone <repo-url> && cd ai-chat
-   ./scripts/build.sh
-   ```
+```bash
+npx @mylocalgpt/ai-chat@latest start
+```
 
-2. Create a config file at `~/.ai-chat/config.json` or `config.json` in the project root:
-   ```json
-   {
-     "telegram": {
-       "bot_token": "your-bot-token",
-       "allowed_users": [123456789]
-     },
-     "openrouter": {
-       "api_key": "your-openrouter-api-key"
-     }
-   }
-   ```
+Create `~/.config/ai-chat/config.json` (or `config.json` in the current directory):
 
-   Get the bot token from [@BotFather](https://t.me/BotFather), your user ID from [@userinfobot](https://t.me/userinfobot), and an API key from [OpenRouter](https://openrouter.ai/keys).
+```json
+{
+  "telegram": {
+    "bot_token": "your-bot-token",
+    "allowed_users": [123456789]
+  },
+  "openrouter": {
+    "api_key": "your-openrouter-api-key"
+  }
+}
+```
 
-   Optional fields: `db_path` (default `~/.ai-chat/state.db`), `log_dir` (default `~/.ai-chat/logs/`), `http_addr` (default `127.0.0.1:8080`).
+Get the bot token from [@BotFather](https://t.me/BotFather) on Telegram. Find your user ID by messaging your bot and checking `from.id` via the [getUpdates](https://core.telegram.org/bots/api#getupdates) API. Get an API key from [OpenRouter](https://openrouter.ai/keys).
 
-3. Run:
-   ```bash
-   ./ai-chat start
-   ```
-
-   Config is found automatically. The web UI is at `http://127.0.0.1:8080`. Your Telegram bot is live.
+The web UI runs at `http://127.0.0.1:8080`.
 
 ## How It Works
 
-Messages flow through four layers:
+You send a message via Telegram or the web UI. An orchestrator classifies it (using a cheap LLM via OpenRouter) and routes it to the right workspace and agent. The agent runs in a tmux session on your machine, and the response is sent back through the same channel.
 
-```
-Channels ──> Orchestrator ──> Executor ──> Agents
-(Telegram,    (routes to       (manages      (Claude, OpenCode,
- Browser)      workspace)       tmux)         Copilot)
-```
+Workspaces are project directories. Each gets its own agent sessions, so context stays isolated. Switch between them mid-conversation.
 
-**Channels** receive messages from Telegram (long polling) or the browser (WebSocket) and normalize them into a common format.
+## MCP Server
 
-**Orchestrator** decides which workspace and agent should handle a message. It uses OpenRouter for intent classification and maintains per-user context so conversations resume where you left off.
+Add to your MCP client config (Claude, Copilot, Cursor, etc.):
 
-**Executor** manages the agent lifecycle. Each agent runs in its own tmux session tied to a workspace directory. The executor spawns sessions on demand, captures output, detects crashes, and handles reconnection.
-
-**Agents** are the AI tools doing the actual work. Each has a harness that knows how to start it, send input, and read output from tmux. Claude runs via `claude -p`, OpenCode via `opencode`, and Copilot via GitHub Copilot CLI.
-
-### Workspaces
-
-A workspace is a project directory on your machine. You can create multiple workspaces and switch between them mid-conversation. Each workspace gets its own agent sessions, so context stays isolated.
-
-### MCP Server
-
-ai-chat can also run as an [MCP](https://modelcontextprotocol.io/) server for integration with other tools:
-
-```bash
-./ai-chat stdio
-```
-
-This exposes tools for managing workspaces, sessions, health checks, and model configuration over stdio.
-
-### Audit
-
-All activity is logged to daily-rotated JSONL files. Check for anomalies or review usage:
-
-```bash
-./ai-chat audit check -days 1
-./ai-chat audit usage -workspace myproject -days 7
+```json
+{
+  "mcpServers": {
+    "ai-chat": {
+      "command": "npx",
+      "args": ["-y", "@mylocalgpt/ai-chat@latest", "stdio"]
+    }
+  }
+}
 ```
 
 ## License

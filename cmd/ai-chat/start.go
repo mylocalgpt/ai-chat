@@ -25,7 +25,7 @@ import (
 
 func runStart(args []string) {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
-	configPath := fs.String("config", "", "path to config file (default: ~/.ai-chat/config.json, then ./config.json)")
+	configPath := fs.String("config", "", "path to config file (default: ~/.config/ai-chat/config.json, then ./config.json)")
 	_ = fs.Parse(args)
 
 	// Set up structured JSON logging to stderr.

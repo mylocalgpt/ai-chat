@@ -30,8 +30,7 @@ type OpenRouterConfig struct {
 }
 
 // Load reads and parses a JSON config file. If path is empty, it checks
-// ~/.ai-chat/config.json first, then config.json in the current directory.
-// Tilde is expanded in the path and in path fields within the config.
+// ~/.config/ai-chat/config.json first, then config.json in the current directory.
 func Load(path string) (*Config, error) {
 	resolved, err := resolveConfigPath(path)
 	if err != nil {
@@ -50,10 +49,10 @@ func Load(path string) (*Config, error) {
 
 	// Apply defaults for empty fields.
 	if cfg.DBPath == "" {
-		cfg.DBPath = "~/.ai-chat/state.db"
+		cfg.DBPath = appDir() + "/state.db"
 	}
 	if cfg.LogDir == "" {
-		cfg.LogDir = "~/.ai-chat/logs/"
+		cfg.LogDir = appDir() + "/logs"
 	}
 	if cfg.LogRetainDays == 0 {
 		cfg.LogRetainDays = 30
@@ -99,10 +98,10 @@ func LoadForMCP(path string) (*Config, error) {
 
 	// Apply defaults for empty fields.
 	if cfg.DBPath == "" {
-		cfg.DBPath = "~/.ai-chat/state.db"
+		cfg.DBPath = appDir() + "/state.db"
 	}
 	if cfg.LogDir == "" {
-		cfg.LogDir = "~/.ai-chat/logs/"
+		cfg.LogDir = appDir() + "/logs"
 	}
 	if cfg.LogRetainDays == 0 {
 		cfg.LogRetainDays = 30
@@ -171,25 +170,34 @@ func (c *Config) String() string {
 
 // resolveConfigPath returns the config file path to use. If an explicit path
 // is given, it expands tilde and returns it. Otherwise it checks
-// ~/.ai-chat/config.json first, then config.json in the current directory.
+// ~/.config/ai-chat/config.json first, then config.json in the current directory.
 func resolveConfigPath(path string) (string, error) {
 	if path != "" {
 		return expandHome(path)
 	}
 
-	home, err := expandHome("~/.ai-chat/config.json")
-	if err != nil {
-		return "", fmt.Errorf("expanding config path: %w", err)
-	}
-	if _, err := os.Stat(home); err == nil {
-		return home, nil
+	xdgPath := appDir() + "/config.json"
+	if _, err := os.Stat(xdgPath); err == nil {
+		return xdgPath, nil
 	}
 
 	if _, err := os.Stat("config.json"); err == nil {
 		return "config.json", nil
 	}
 
-	return home, nil
+	return xdgPath, nil
+}
+
+// appDir returns the ai-chat config/data directory (~/.config/ai-chat).
+func appDir() string {
+	if dir := os.Getenv("AI_CHAT_HOME"); dir != "" {
+		return dir
+	}
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "ai-chat")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "ai-chat")
 }
 
 // expandHome replaces a leading ~ in path with the user's home directory.

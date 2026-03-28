@@ -93,11 +93,11 @@ func TestLoad(t *testing.T) {
 			}`,
 			check: func(t *testing.T, cfg *Config) {
 				home, _ := os.UserHomeDir()
-				wantDB := filepath.Join(home, ".ai-chat", "state.db")
+				wantDB := filepath.Join(home, ".config", "ai-chat", "state.db")
 				if cfg.DBPath != wantDB {
 					t.Errorf("db_path = %q, want %q", cfg.DBPath, wantDB)
 				}
-				wantLog := filepath.Join(home, ".ai-chat", "logs")
+				wantLog := filepath.Join(home, ".config", "ai-chat", "logs")
 				if cfg.LogDir != wantLog {
 					t.Errorf("log_dir = %q, want %q", cfg.LogDir, wantLog)
 				}
