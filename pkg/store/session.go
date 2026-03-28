@@ -9,10 +9,10 @@ import (
 )
 
 // CreateSession inserts a new session and returns it with server-set defaults.
-func (s *Store) CreateSession(ctx context.Context, workspaceID int64, agent, tmuxSession string) (*core.Session, error) {
+func (s *Store) CreateSession(ctx context.Context, workspaceID int64, agent, slug, tmuxSession string) (*core.Session, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (workspace_id, agent, tmux_session) VALUES (?, ?, ?)`,
-		workspaceID, agent, tmuxSession,
+		`INSERT INTO sessions (workspace_id, agent, slug, tmux_session) VALUES (?, ?, ?, ?)`,
+		workspaceID, agent, slug, tmuxSession,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating session: %w", err)
@@ -29,7 +29,7 @@ func (s *Store) CreateSession(ctx context.Context, workspaceID int64, agent, tmu
 // GetActiveSession returns the most recent active session for a workspace.
 func (s *Store) GetActiveSession(ctx context.Context, workspaceID int64) (*core.Session, error) {
 	sess, err := s.scanSession(s.db.QueryRowContext(ctx,
-		`SELECT id, workspace_id, agent, tmux_session, status, started_at, last_activity
+		`SELECT id, workspace_id, agent, slug, agent_session_id, tmux_session, status, started_at, last_activity
 		 FROM sessions WHERE workspace_id = ? AND status = 'active'
 		 ORDER BY started_at DESC LIMIT 1`,
 		workspaceID,
@@ -71,7 +71,7 @@ func (s *Store) TouchSession(ctx context.Context, id int64) error {
 // then by started_at descending. Returns an empty slice if none.
 func (s *Store) ListSessions(ctx context.Context) ([]core.Session, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, workspace_id, agent, tmux_session, status, started_at, last_activity
+		`SELECT id, workspace_id, agent, slug, agent_session_id, tmux_session, status, started_at, last_activity
 		 FROM sessions ORDER BY last_activity DESC NULLS LAST, started_at DESC`,
 	)
 	if err != nil {
@@ -87,8 +87,8 @@ func (s *Store) ListSessions(ctx context.Context) ([]core.Session, error) {
 		var lastActivity sql.NullString
 
 		err := rows.Scan(
-			&sess.ID, &sess.WorkspaceID, &sess.Agent, &tmuxSession,
-			&sess.Status, &startedAt, &lastActivity,
+			&sess.ID, &sess.WorkspaceID, &sess.Agent, &sess.Slug, &sess.AgentSessionID,
+			&tmuxSession, &sess.Status, &startedAt, &lastActivity,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning session: %w", err)
@@ -106,9 +106,66 @@ func (s *Store) ListSessions(ctx context.Context) ([]core.Session, error) {
 	return sessions, rows.Err()
 }
 
+// ListSessionsForWorkspace returns sessions for a workspace ordered by
+// last_activity descending (nulls last), then by started_at descending.
+func (s *Store) ListSessionsForWorkspace(ctx context.Context, workspaceID int64) ([]core.Session, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, workspace_id, agent, slug, agent_session_id, tmux_session, status, started_at, last_activity
+		 FROM sessions WHERE workspace_id = ?
+		 ORDER BY last_activity DESC NULLS LAST, started_at DESC`,
+		workspaceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions for workspace %d: %w", workspaceID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	sessions := []core.Session{}
+	for rows.Next() {
+		var sess core.Session
+		var tmuxSession sql.NullString
+		var startedAt string
+		var lastActivity sql.NullString
+
+		err := rows.Scan(
+			&sess.ID, &sess.WorkspaceID, &sess.Agent, &sess.Slug, &sess.AgentSessionID,
+			&tmuxSession, &sess.Status, &startedAt, &lastActivity,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scanning session: %w", err)
+		}
+
+		if tmuxSession.Valid {
+			sess.TmuxSession = tmuxSession.String
+		}
+		sess.StartedAt = parseTime(startedAt)
+		if lastActivity.Valid {
+			sess.LastActivity = parseTime(lastActivity.String)
+		}
+		sessions = append(sessions, sess)
+	}
+	return sessions, rows.Err()
+}
+
+// GetSessionBySlug finds a specific session by slug within a workspace.
+func (s *Store) GetSessionBySlug(ctx context.Context, workspaceID int64, slug string) (*core.Session, error) {
+	sess, err := s.scanSession(s.db.QueryRowContext(ctx,
+		`SELECT id, workspace_id, agent, slug, agent_session_id, tmux_session, status, started_at, last_activity
+		 FROM sessions WHERE workspace_id = ? AND slug = ?`,
+		workspaceID, slug,
+	))
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("session slug=%q workspace=%d: %w", slug, workspaceID, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting session by slug: %w", err)
+	}
+	return sess, nil
+}
+
 func (s *Store) getSessionByID(ctx context.Context, id int64) (*core.Session, error) {
 	sess, err := s.scanSession(s.db.QueryRowContext(ctx,
-		`SELECT id, workspace_id, agent, tmux_session, status, started_at, last_activity
+		`SELECT id, workspace_id, agent, slug, agent_session_id, tmux_session, status, started_at, last_activity
 		 FROM sessions WHERE id = ?`, id,
 	))
 	if err != nil {
@@ -124,8 +181,8 @@ func (s *Store) scanSession(row *sql.Row) (*core.Session, error) {
 	var lastActivity sql.NullString
 
 	err := row.Scan(
-		&sess.ID, &sess.WorkspaceID, &sess.Agent, &tmuxSession,
-		&sess.Status, &startedAt, &lastActivity,
+		&sess.ID, &sess.WorkspaceID, &sess.Agent, &sess.Slug, &sess.AgentSessionID,
+		&tmuxSession, &sess.Status, &startedAt, &lastActivity,
 	)
 	if err != nil {
 		return nil, err

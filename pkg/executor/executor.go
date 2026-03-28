@@ -26,7 +26,7 @@ type tmuxRunner interface {
 
 // sessionStore abstracts store operations used by the executor.
 type sessionStore interface {
-	CreateSession(ctx context.Context, workspaceID int64, agent, tmuxSession string) (*core.Session, error)
+	CreateSession(ctx context.Context, workspaceID int64, agent, slug, tmuxSession string) (*core.Session, error)
 	GetActiveSession(ctx context.Context, workspaceID int64) (*core.Session, error)
 	UpdateSessionStatus(ctx context.Context, id int64, status string) error
 	TouchSession(ctx context.Context, id int64) error
@@ -77,8 +77,6 @@ func (e *Executor) Execute(ctx context.Context, ws core.Workspace, agent, messag
 	}
 
 	// Tmux path: session lifecycle.
-	sessionName := SessionName(ws.Name, agent)
-	log = log.With("tmux_session", sessionName)
 
 	// Look up existing active session.
 	sess, err := e.store.GetActiveSession(ctx, ws.ID)
@@ -93,6 +91,12 @@ func (e *Executor) Execute(ctx context.Context, ws core.Workspace, agent, messag
 
 	// Spawn a new session if needed.
 	if sess == nil {
+		sessionName, slug, err := NewSessionName(ws.Name)
+		if err != nil {
+			return "", fmt.Errorf("executor: generate session name: %w", err)
+		}
+		log = log.With("tmux_session", sessionName)
+
 		log.Info("spawning new session")
 		if err := e.tmux.NewSession(sessionName, ws.Path); err != nil {
 			return "", fmt.Errorf("executor: create tmux session: %w", err)
@@ -109,7 +113,7 @@ func (e *Executor) Execute(ctx context.Context, ws core.Workspace, agent, messag
 			return "", fmt.Errorf("executor: spawn agent: %w", err)
 		}
 
-		newSess, err := e.store.CreateSession(ctx, ws.ID, agent, sessionName)
+		newSess, err := e.store.CreateSession(ctx, ws.ID, agent, slug, sessionName)
 		if err != nil {
 			_ = e.tmux.KillSession(sessionName)
 			return "", fmt.Errorf("executor: create session record: %w", err)
@@ -125,12 +129,12 @@ func (e *Executor) Execute(ctx context.Context, ws core.Workspace, agent, messag
 		return "", fmt.Errorf("executor: %w", err)
 	}
 
-	snapshot, err := harness.SendMessage(ctx, sessionName, message)
+	snapshot, err := harness.SendMessage(ctx, sess.TmuxSession, message)
 	if err != nil {
 		return "", fmt.Errorf("executor: send message: %w", err)
 	}
 
-	response, err := harness.ReadResponse(ctx, sessionName, snapshot)
+	response, err := harness.ReadResponse(ctx, sess.TmuxSession, snapshot)
 	if err != nil {
 		if errors.Is(err, ErrResponseTimeout) {
 			_ = e.store.UpdateSessionStatus(ctx, sess.ID, string(core.SessionCrashed))
@@ -186,7 +190,10 @@ func (e *Executor) SpawnSession(ctx context.Context, ws core.Workspace, agent st
 		return ErrRemoteNotSupported
 	}
 
-	sessionName := SessionName(ws.Name, agent)
+	sessionName, slug, err := NewSessionName(ws.Name)
+	if err != nil {
+		return fmt.Errorf("executor: generate session name: %w", err)
+	}
 
 	if err := e.tmux.NewSession(sessionName, ws.Path); err != nil {
 		return fmt.Errorf("executor: create tmux session: %w", err)
@@ -203,7 +210,7 @@ func (e *Executor) SpawnSession(ctx context.Context, ws core.Workspace, agent st
 		return fmt.Errorf("executor: spawn agent: %w", err)
 	}
 
-	_, err = e.store.CreateSession(ctx, ws.ID, agent, sessionName)
+	_, err = e.store.CreateSession(ctx, ws.ID, agent, slug, sessionName)
 	if err != nil {
 		_ = e.tmux.KillSession(sessionName)
 		return fmt.Errorf("executor: create session record: %w", err)

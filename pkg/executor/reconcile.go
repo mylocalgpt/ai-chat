@@ -90,9 +90,8 @@ func (e *Executor) ReconcileSessions(ctx context.Context) (*ReconcileResult, err
 		dbSessionNames[sess.TmuxSession] = true
 	}
 
-	knownAgents := e.registry.KnownAgents()
 	for _, name := range liveSessions {
-		_, _, ok := ParseSessionName(name, knownAgents)
+		_, _, ok := ParseSessionSlug(name)
 		if !ok {
 			continue // not our session
 		}

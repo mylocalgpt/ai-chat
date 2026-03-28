@@ -41,8 +41,8 @@ func (s *trackingStore) TouchSession(_ context.Context, id int64) error {
 func TestReconcileMarksCrashedSessions(t *testing.T) {
 	st := newTrackingStore()
 	st.sessions = []*core.Session{
-		{ID: 1, WorkspaceID: 1, Agent: "claude", TmuxSession: "ai-chat-proj-claude", Status: string(core.SessionActive)},
-		{ID: 2, WorkspaceID: 2, Agent: "claude", TmuxSession: "ai-chat-other-claude", Status: string(core.SessionActive)},
+		{ID: 1, WorkspaceID: 1, Agent: "claude", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
+		{ID: 2, WorkspaceID: 2, Agent: "claude", Slug: "c3d4", TmuxSession: "ai-chat-other-c3d4", Status: string(core.SessionActive)},
 	}
 
 	// No live tmux sessions.
@@ -69,11 +69,11 @@ func TestReconcileMarksCrashedSessions(t *testing.T) {
 func TestReconcileKeepsAliveSessions(t *testing.T) {
 	st := newTrackingStore()
 	st.sessions = []*core.Session{
-		{ID: 1, WorkspaceID: 1, Agent: "claude", TmuxSession: "ai-chat-proj-claude", Status: string(core.SessionActive)},
+		{ID: 1, WorkspaceID: 1, Agent: "claude", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
 	}
 
 	tmx := newMockTmux()
-	tmx.sessions["ai-chat-proj-claude"] = true
+	tmx.sessions["ai-chat-proj-a1b2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
 	exec := NewExecutor(st, tmx, reg)
@@ -99,7 +99,7 @@ func TestReconcileCountsOrphans(t *testing.T) {
 	// No DB sessions.
 
 	tmx := newMockTmux()
-	tmx.sessions["ai-chat-orphan-claude"] = true
+	tmx.sessions["ai-chat-orphan-x1y2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
 	exec := NewExecutor(st, tmx, reg)
@@ -120,7 +120,7 @@ func TestCleanupKillsStale(t *testing.T) {
 	st.sessions = []*core.Session{
 		{
 			ID: 1, WorkspaceID: 1, Agent: "claude",
-			TmuxSession:  "ai-chat-proj-claude",
+			TmuxSession:  "ai-chat-proj-a1b2",
 			Status:        string(core.SessionActive),
 			LastActivity:  old,
 			StartedAt:     old,
@@ -128,7 +128,7 @@ func TestCleanupKillsStale(t *testing.T) {
 	}
 
 	tmx := newMockTmux()
-	tmx.sessions["ai-chat-proj-claude"] = true
+	tmx.sessions["ai-chat-proj-a1b2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
 	exec := NewExecutor(st, tmx, reg)
@@ -143,7 +143,7 @@ func TestCleanupKillsStale(t *testing.T) {
 	}
 
 	// tmux session should have been killed.
-	if tmx.sessions["ai-chat-proj-claude"] {
+	if tmx.sessions["ai-chat-proj-a1b2"] {
 		t.Error("stale tmux session should have been killed")
 	}
 
@@ -159,7 +159,7 @@ func TestCleanupSkipsFresh(t *testing.T) {
 	st.sessions = []*core.Session{
 		{
 			ID: 1, WorkspaceID: 1, Agent: "claude",
-			TmuxSession:  "ai-chat-proj-claude",
+			TmuxSession:  "ai-chat-proj-a1b2",
 			Status:        string(core.SessionActive),
 			LastActivity:  recent,
 			StartedAt:     recent,
@@ -167,7 +167,7 @@ func TestCleanupSkipsFresh(t *testing.T) {
 	}
 
 	tmx := newMockTmux()
-	tmx.sessions["ai-chat-proj-claude"] = true
+	tmx.sessions["ai-chat-proj-a1b2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
 	exec := NewExecutor(st, tmx, reg)
@@ -191,7 +191,7 @@ func TestCleanupFallsBackToStartedAt(t *testing.T) {
 	st.sessions = []*core.Session{
 		{
 			ID: 1, WorkspaceID: 1, Agent: "claude",
-			TmuxSession: "ai-chat-proj-claude",
+			TmuxSession: "ai-chat-proj-a1b2",
 			Status:       string(core.SessionActive),
 			StartedAt:    old,
 			// LastActivity is zero (NULL in DB).
@@ -199,7 +199,7 @@ func TestCleanupFallsBackToStartedAt(t *testing.T) {
 	}
 
 	tmx := newMockTmux()
-	tmx.sessions["ai-chat-proj-claude"] = true
+	tmx.sessions["ai-chat-proj-a1b2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
 	exec := NewExecutor(st, tmx, reg)

@@ -34,68 +34,25 @@ func TestStripANSI(t *testing.T) {
 	}
 }
 
-func TestSessionName(t *testing.T) {
+func TestSanitizePart(t *testing.T) {
 	tests := []struct {
-		name      string
-		workspace string
-		agent     string
-		want      string
+		name string
+		in   string
+		want string
 	}{
-		{"normal", "myproject", "claude", "ai-chat-myproject-claude"},
-		{"spaces", "my project", "open code", "ai-chat-my-project-open-code"},
-		{"dots", "my.project", "claude", "ai-chat-my-project-claude"},
-		{"special chars", "my@project!", "claude#2", "ai-chat-my-project-claude-2"},
-		{"uppercase", "MyProject", "Claude", "ai-chat-myproject-claude"},
-		{"hyphens preserved", "my-project", "claude-oneshot", "ai-chat-my-project-claude-oneshot"},
-		{"leading trailing special", ".project.", ".agent.", "ai-chat-project-agent"},
+		{"normal", "myproject", "myproject"},
+		{"spaces", "my project", "my-project"},
+		{"dots", "my.project", "my-project"},
+		{"special chars", "my@project!", "my-project"},
+		{"uppercase", "MyProject", "myproject"},
+		{"hyphens preserved", "my-project", "my-project"},
+		{"leading trailing special", ".project.", "project"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SessionName(tt.workspace, tt.agent)
+			got := sanitizePart(tt.in)
 			if got != tt.want {
-				t.Errorf("SessionName(%q, %q) = %q, want %q", tt.workspace, tt.agent, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseSessionName(t *testing.T) {
-	agents := []string{"claude", "opencode", "copilot", "claude-oneshot"}
-
-	tests := []struct {
-		name          string
-		input         string
-		wantWorkspace string
-		wantAgent     string
-		wantOK        bool
-	}{
-		{"simple", "ai-chat-myproject-claude", "myproject", "claude", true},
-		{"hyphenated workspace", "ai-chat-my-project-claude", "my-project", "claude", true},
-		{"oneshot agent", "ai-chat-lab-claude-oneshot", "lab", "claude-oneshot", true},
-		{"hyphenated workspace oneshot", "ai-chat-my-project-claude-oneshot", "my-project", "claude-oneshot", true},
-		{"opencode agent", "ai-chat-work-opencode", "work", "opencode", true},
-		{"copilot agent", "ai-chat-demo-copilot", "demo", "copilot", true},
-		{"wrong prefix", "other-myproject-claude", "", "", false},
-		{"no prefix", "myproject-claude", "", "", false},
-		{"empty after prefix", "ai-chat-", "", "", false},
-		{"no matching agent", "ai-chat-myproject-unknown", "", "", false},
-		{"empty workspace", "ai-chat--claude", "", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ws, ag, ok := ParseSessionName(tt.input, agents)
-			if ok != tt.wantOK {
-				t.Errorf("ParseSessionName(%q) ok = %v, want %v", tt.input, ok, tt.wantOK)
-				return
-			}
-			if !tt.wantOK {
-				return
-			}
-			if ws != tt.wantWorkspace {
-				t.Errorf("ParseSessionName(%q) workspace = %q, want %q", tt.input, ws, tt.wantWorkspace)
-			}
-			if ag != tt.wantAgent {
-				t.Errorf("ParseSessionName(%q) agent = %q, want %q", tt.input, ag, tt.wantAgent)
+				t.Errorf("sanitizePart(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}

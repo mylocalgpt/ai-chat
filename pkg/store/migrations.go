@@ -10,7 +10,6 @@ import (
 // Each runs in its own transaction. Append new migrations to the end.
 var migrations = []func(*sql.Tx) error{
 	migration001,
-	migration002,
 }
 
 // Migrate runs all pending migrations against the database.
@@ -74,7 +73,7 @@ func schemaVersion(db *sql.DB) (int, error) {
 	return v, nil
 }
 
-// migration001 creates the initial schema: workspaces, messages, sessions, user_context.
+// migration001 creates the full schema from scratch.
 func migration001(tx *sql.Tx) error {
 	stmts := []string{
 		`CREATE TABLE workspaces (
@@ -105,6 +104,8 @@ func migration001(tx *sql.Tx) error {
 			id INTEGER PRIMARY KEY,
 			workspace_id INTEGER REFERENCES workspaces(id),
 			agent TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			agent_session_id TEXT DEFAULT '',
 			tmux_session TEXT,
 			status TEXT DEFAULT 'active',
 			started_at TEXT DEFAULT (datetime('now')),
@@ -112,6 +113,7 @@ func migration001(tx *sql.Tx) error {
 		)`,
 
 		`CREATE INDEX idx_sessions_workspace_status ON sessions(workspace_id, status)`,
+		`CREATE UNIQUE INDEX idx_sessions_workspace_slug ON sessions(workspace_id, slug)`,
 
 		`CREATE TABLE user_context (
 			sender_id TEXT NOT NULL,
@@ -119,6 +121,14 @@ func migration001(tx *sql.Tx) error {
 			active_workspace_id INTEGER REFERENCES workspaces(id),
 			updated_at TEXT DEFAULT (datetime('now')),
 			PRIMARY KEY (sender_id, channel)
+		)`,
+
+		`CREATE TABLE model_config (
+			role TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			model TEXT NOT NULL,
+			metadata TEXT DEFAULT '{}',
+			updated_at TEXT DEFAULT (datetime('now'))
 		)`,
 	}
 
@@ -128,16 +138,4 @@ func migration001(tx *sql.Tx) error {
 		}
 	}
 	return nil
-}
-
-// migration002 creates the model_config table for runtime model configuration.
-func migration002(tx *sql.Tx) error {
-	_, err := tx.Exec(`CREATE TABLE model_config (
-		role TEXT PRIMARY KEY,
-		provider TEXT NOT NULL,
-		model TEXT NOT NULL,
-		metadata TEXT DEFAULT '{}',
-		updated_at TEXT DEFAULT (datetime('now'))
-	)`)
-	return err
 }

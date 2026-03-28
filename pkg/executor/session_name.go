@@ -1,11 +1,26 @@
 package executor
 
 import (
+	"crypto/rand"
+	"fmt"
 	"regexp"
 	"strings"
 )
 
 const sessionPrefix = "ai-chat-"
+
+// MaxWorkspaceNameLen is the maximum allowed length for a workspace name
+// after sanitization.
+const MaxWorkspaceNameLen = 20
+
+// slugCharset is the set of characters used for random slug generation.
+const slugCharset = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+// slugLen is the length of the random slug.
+const slugLen = 4
+
+// slugRe matches exactly 4 lowercase alphanumeric characters.
+var slugRe = regexp.MustCompile(`^[a-z0-9]{4}$`)
 
 // sanitizeRe matches characters that are problematic in tmux session names.
 var sanitizeRe = regexp.MustCompile(`[^a-z0-9-]`)
@@ -23,20 +38,26 @@ func sanitizePart(s string) string {
 	return s
 }
 
-// SessionName returns a tmux session name in the form ai-chat-<workspace>-<agent>
-// with both parts sanitized for safe use as tmux session names.
-func SessionName(workspace, agent string) string {
+// NewSessionName generates a session name with a random 4-char slug.
+// Returns the full name ("ai-chat-lab-a3f2") and the slug ("a3f2").
+func NewSessionName(workspace string) (name, slug string, err error) {
 	w := sanitizePart(workspace)
-	a := sanitizePart(agent)
-	return sessionPrefix + w + "-" + a
+	if w == "" {
+		return "", "", fmt.Errorf("workspace name is empty after sanitization")
+	}
+
+	slug, err = generateSlug()
+	if err != nil {
+		return "", "", fmt.Errorf("generating slug: %w", err)
+	}
+
+	name = sessionPrefix + w + "-" + slug
+	return name, slug, nil
 }
 
-// ParseSessionName is the inverse of SessionName. It accepts a session name
-// and a list of known agent suffixes and returns the workspace and agent parts.
-// It returns ok=false if the name does not have the ai-chat- prefix or if no
-// known agent suffix matches. Agent matching is done from the right so that
-// workspace names containing hyphens are handled correctly.
-func ParseSessionName(name string, knownAgents []string) (workspace, agent string, ok bool) {
+// ParseSessionSlug extracts workspace and slug from a session name.
+// Returns ok=false if the name doesn't match "ai-chat-<workspace>-<slug>" format.
+func ParseSessionSlug(name string) (workspace, slug string, ok bool) {
 	if !strings.HasPrefix(name, sessionPrefix) {
 		return "", "", false
 	}
@@ -45,27 +66,43 @@ func ParseSessionName(name string, knownAgents []string) (workspace, agent strin
 		return "", "", false
 	}
 
-	// Try each known agent, matching the longest first to handle agents like
-	// "claude-oneshot" before "claude".
-	bestAgent := ""
-	bestWorkspace := ""
-	for _, a := range knownAgents {
-		suffix := "-" + a
-		if strings.HasSuffix(rest, suffix) {
-			ws := rest[:len(rest)-len(suffix)]
-			if ws == "" {
-				continue
-			}
-			// Pick the longest matching agent to resolve ambiguity.
-			if len(a) > len(bestAgent) {
-				bestAgent = a
-				bestWorkspace = ws
-			}
-		}
-	}
-
-	if bestAgent == "" {
+	// Split on the last hyphen. The trailing segment must be exactly 4
+	// lowercase alphanumeric characters to be recognized as a slug.
+	lastHyphen := strings.LastIndex(rest, "-")
+	if lastHyphen < 1 { // must have at least 1 char for workspace
 		return "", "", false
 	}
-	return bestWorkspace, bestAgent, true
+
+	candidate := rest[lastHyphen+1:]
+	if !slugRe.MatchString(candidate) {
+		return "", "", false
+	}
+
+	workspace = rest[:lastHyphen]
+	if workspace == "" {
+		return "", "", false
+	}
+
+	return workspace, candidate, true
+}
+
+// ValidateWorkspaceName checks workspace name length against MaxWorkspaceNameLen.
+// Returns an error if too long.
+func ValidateWorkspaceName(name string) error {
+	if len(name) > MaxWorkspaceNameLen {
+		return fmt.Errorf("workspace name %q exceeds max length %d", name, MaxWorkspaceNameLen)
+	}
+	return nil
+}
+
+// generateSlug creates a random 4-character alphanumeric slug using crypto/rand.
+func generateSlug() (string, error) {
+	b := make([]byte, slugLen)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	for i := range b {
+		b[i] = slugCharset[int(b[i])%len(slugCharset)]
+	}
+	return string(b), nil
 }

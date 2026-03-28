@@ -48,13 +48,25 @@ type Workspace struct {
 
 // Session represents an active AI agent session in a workspace.
 type Session struct {
-	ID           int64
-	WorkspaceID  int64
-	Agent        string // "claude", "opencode", "copilot"
-	TmuxSession  string
-	Status       string // use SessionStatus constants
-	StartedAt    time.Time
-	LastActivity time.Time
+	ID             int64
+	WorkspaceID    int64
+	Agent          string // "claude", "opencode", "copilot"
+	Slug           string // random 4-char slug
+	AgentSessionID string // agent's own session identifier
+	TmuxSession    string
+	Status         string // use SessionStatus constants
+	StartedAt      time.Time
+	LastActivity   time.Time
+}
+
+// SessionInfo holds computed, read-only information about a session.
+type SessionInfo struct {
+	Name          string // "ai-chat-lab-a3f2"
+	Slug          string // "a3f2"
+	Workspace     string // "lab"
+	WorkspacePath string // "/home/chief/code/research-lab"
+	Agent         string // "claude"
+	ResponseFile  string // full path to response JSON
 }
 
 // UserContext tracks per-user, per-channel state.

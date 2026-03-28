@@ -59,11 +59,12 @@ func newMockStore() *mockStore {
 	return &mockStore{nextID: 1}
 }
 
-func (m *mockStore) CreateSession(_ context.Context, workspaceID int64, agent, tmuxSession string) (*core.Session, error) {
+func (m *mockStore) CreateSession(_ context.Context, workspaceID int64, agent, slug, tmuxSession string) (*core.Session, error) {
 	sess := &core.Session{
 		ID:          m.nextID,
 		WorkspaceID: workspaceID,
 		Agent:       agent,
+		Slug:        slug,
 		TmuxSession: tmuxSession,
 		Status:      string(core.SessionActive),
 	}
@@ -148,12 +149,12 @@ func TestExecuteCLIPath(t *testing.T) {
 
 func TestSessionInfoEnrichment(t *testing.T) {
 	tmx := newMockTmux()
-	tmx.sessions["ai-chat-proj-claude"] = true
+	tmx.sessions["ai-chat-proj-a1b2"] = true
 
 	st := newMockStore()
 	st.sessions = []*core.Session{
-		{ID: 1, WorkspaceID: 1, Agent: "claude", TmuxSession: "ai-chat-proj-claude", Status: string(core.SessionActive)},
-		{ID: 2, WorkspaceID: 2, Agent: "claude", TmuxSession: "ai-chat-old-claude", Status: string(core.SessionCrashed)},
+		{ID: 1, WorkspaceID: 1, Agent: "claude", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
+		{ID: 2, WorkspaceID: 2, Agent: "claude", Slug: "c3d4", TmuxSession: "ai-chat-old-c3d4", Status: string(core.SessionCrashed)},
 	}
 
 	exec := NewExecutor(st, tmx, NewHarnessRegistry(NewTmux()))

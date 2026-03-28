@@ -16,7 +16,7 @@ func TestSessionCRUD(t *testing.T) {
 	}
 
 	// Create session.
-	sess, err := s.CreateSession(ctx, w.ID, "claude", "tmux-sess-1")
+	sess, err := s.CreateSession(ctx, w.ID, "claude", "a1b2", "tmux-sess-1")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestTouchSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWorkspace: %v", err)
 	}
-	sess, err := s.CreateSession(ctx, w.ID, "claude", "tmux-1")
+	sess, err := s.CreateSession(ctx, w.ID, "claude", "c3d4", "tmux-1")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -94,11 +94,11 @@ func TestListSessions(t *testing.T) {
 	}
 
 	// Create two sessions.
-	s1, err := s.CreateSession(ctx, w.ID, "claude", "tmux-1")
+	s1, err := s.CreateSession(ctx, w.ID, "claude", "e5f6", "tmux-1")
 	if err != nil {
 		t.Fatalf("CreateSession 1: %v", err)
 	}
-	_, err = s.CreateSession(ctx, w.ID, "opencode", "tmux-2")
+	_, err = s.CreateSession(ctx, w.ID, "opencode", "g7h8", "tmux-2")
 	if err != nil {
 		t.Fatalf("CreateSession 2: %v", err)
 	}
