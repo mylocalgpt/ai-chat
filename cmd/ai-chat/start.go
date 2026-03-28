@@ -12,6 +12,7 @@ import (
 	"time"
 
 	aichat "github.com/mylocalgpt/ai-chat"
+	"github.com/mylocalgpt/ai-chat/pkg/audit"
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
 	webpkg "github.com/mylocalgpt/ai-chat/pkg/channel/web"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
@@ -34,6 +35,12 @@ func runStart(args []string) {
 		os.Exit(1)
 	}
 	slog.Info("config loaded", "config", cfg.String())
+
+	// Initialize audit logger.
+	if err := audit.Init(cfg.LogDir, cfg.LogRetainDays); err != nil {
+		slog.Error("failed to init audit logger", "error", err)
+		os.Exit(1)
+	}
 
 	// Ensure data directory exists.
 	dbDir := filepath.Dir(cfg.DBPath)
@@ -117,4 +124,5 @@ func runStart(args []string) {
 	defer shutdownCancel()
 	srv.Shutdown(shutdownCtx)
 	st.Close()
+	audit.CloseGlobal()
 }

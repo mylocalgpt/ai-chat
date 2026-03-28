@@ -12,9 +12,10 @@ import (
 type Config struct {
 	Telegram   TelegramConfig   `json:"telegram"`
 	OpenRouter OpenRouterConfig `json:"openrouter"`
-	DBPath     string           `json:"db_path"`
-	LogDir     string           `json:"log_dir"`
-	HTTPAddr   string           `json:"http_addr"`
+	DBPath        string           `json:"db_path"`
+	LogDir        string           `json:"log_dir"`
+	LogRetainDays int              `json:"log_retain_days"`
+	HTTPAddr      string           `json:"http_addr"`
 }
 
 // TelegramConfig holds Telegram bot credentials and access control.
@@ -57,6 +58,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.LogDir == "" {
 		cfg.LogDir = "~/.ai-chat/logs/"
+	}
+	if cfg.LogRetainDays == 0 {
+		cfg.LogRetainDays = 30
 	}
 	if cfg.HTTPAddr == "" {
 		cfg.HTTPAddr = "127.0.0.1:8080"
@@ -107,6 +111,9 @@ func LoadForMCP(path string) (*Config, error) {
 	}
 	if cfg.LogDir == "" {
 		cfg.LogDir = "~/.ai-chat/logs/"
+	}
+	if cfg.LogRetainDays == 0 {
+		cfg.LogRetainDays = 30
 	}
 	if cfg.HTTPAddr == "" {
 		cfg.HTTPAddr = "127.0.0.1:8080"

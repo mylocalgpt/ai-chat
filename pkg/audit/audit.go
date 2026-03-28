@@ -1,8 +1,18 @@
-// Package audit provides structured JSONL logging for system events.
+// Package audit provides structured JSONL logging for all system events.
 // Every event (inbound message, routing decision, agent call, outbound reply,
 // error, health check) is recorded as one JSON object per line, one file per
 // day. Files live in a configurable directory and are named YYYY-MM-DD.jsonl
 // using UTC dates.
+//
+// Integration contract:
+//   - Part 2 (Telegram): logs Inbound on message receive, Outbound on message send
+//   - Part 3 (Orchestrator): logs Route on every routing decision, calls RunScheduledCheck
+//   - Part 4 (Executor): logs AgentSend when forwarding to agent, AgentResponse on reply,
+//     Error with Status "crashed" on session failures
+//   - Part 5 (MCP): logs Health entries on health checks
+//
+// Call audit.Init() in main before starting any subsystem.
+// Call audit.CloseGlobal() on shutdown.
 package audit
 
 import (
@@ -44,6 +54,7 @@ type AuditLogger struct {
 	currentDate string
 	nowFunc     func() time.Time // defaults to time.Now, injectable for tests
 	done        chan struct{}
+	closeOnce   sync.Once
 }
 
 // NewAuditLogger creates an AuditLogger that writes to dir. If dir does not
@@ -104,16 +115,21 @@ func (a *AuditLogger) Log(entry AuditEntry) error {
 }
 
 // Close stops the background rotation goroutine and closes the file handle.
+// It is safe to call multiple times.
 func (a *AuditLogger) Close() error {
-	close(a.done)
+	var closeErr error
+	a.closeOnce.Do(func() {
+		close(a.done)
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
+		a.mu.Lock()
+		defer a.mu.Unlock()
 
-	if a.current != nil {
-		return a.current.Close()
-	}
-	return nil
+		if a.current != nil {
+			closeErr = a.current.Close()
+			a.current = nil
+		}
+	})
+	return closeErr
 }
 
 // rotate closes the current file and opens a new one for today's date.
