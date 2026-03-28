@@ -7,7 +7,6 @@ import (
 func TestRegistryGetAdapter(t *testing.T) {
 	r := NewHarnessRegistry(NewTmux())
 
-	// Known adapters should return an adapter.
 	for _, agent := range []string{"opencode", "copilot"} {
 		a, err := r.GetAdapter(agent)
 		if err != nil {
@@ -18,7 +17,6 @@ func TestRegistryGetAdapter(t *testing.T) {
 		}
 	}
 
-	// Unknown agent should return error.
 	_, err := r.GetAdapter("unknown")
 	if err == nil {
 		t.Error("GetAdapter(unknown) expected error, got nil")
@@ -50,7 +48,6 @@ func TestRegistryKnownAgents(t *testing.T) {
 	r := NewHarnessRegistry(NewTmux())
 	agents := r.KnownAgents()
 
-	// Should include opencode and copilot (sorted).
 	want := []string{"copilot", "opencode"}
 	if len(agents) != len(want) {
 		t.Fatalf("KnownAgents() = %v, want %v", agents, want)

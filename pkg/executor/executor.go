@@ -11,11 +11,8 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
-// ErrRemoteNotSupported is returned when Execute is called with a workspace
-// whose Host field is non-empty.
 var ErrRemoteNotSupported = errors.New("remote workspace execution not yet supported")
 
-// tmuxRunner abstracts tmux operations for testability.
 type tmuxRunner interface {
 	NewSession(name, workDir string) error
 	HasSession(name string) bool
@@ -25,7 +22,6 @@ type tmuxRunner interface {
 	ListSessions() ([]string, error)
 }
 
-// sessionStore abstracts store operations used by the executor.
 type sessionStore interface {
 	CreateSession(ctx context.Context, workspaceID int64, agent, slug, tmuxSession string) (*core.Session, error)
 	GetActiveSession(ctx context.Context, workspaceID int64) (*core.Session, error)
@@ -34,14 +30,11 @@ type sessionStore interface {
 	ListSessions(ctx context.Context) ([]core.Session, error)
 }
 
-// SessionLiveInfo enriches a core.Session with live tmux state.
 type SessionLiveInfo struct {
 	Session core.Session
 	IsAlive bool
 }
 
-// Executor ties the store, tmux wrapper, and harness registry together. It is
-// the public API of the executor package.
 type Executor struct {
 	store        sessionStore
 	tmux         tmuxRunner
@@ -49,7 +42,6 @@ type Executor struct {
 	responsesDir string
 }
 
-// NewExecutor returns a new Executor. If responsesDir is empty, DefaultResponseDir() is used.
 func NewExecutor(store sessionStore, tmux tmuxRunner, registry *HarnessRegistry, responsesDir string) *Executor {
 	if responsesDir == "" {
 		responsesDir = DefaultResponseDir()
@@ -62,120 +54,20 @@ func NewExecutor(store sessionStore, tmux tmuxRunner, registry *HarnessRegistry,
 	}
 }
 
-// Execute sends a message to an AI agent in the given workspace and returns
-// the response. It handles session reuse, spawning, and lifecycle tracking.
 func (e *Executor) Execute(ctx context.Context, ws core.Workspace, agent, message string) (string, error) {
 	log := slog.With("workspace", ws.Name, "agent", agent)
 
-	// Remote workspaces not yet supported.
 	if ws.Host != "" {
 		return "", ErrRemoteNotSupported
 	}
 
-	// Adapter path: new interface with response files.
-	if e.registry.IsAdapter(agent) {
-		return e.executeAdapter(ctx, log, ws, agent, message)
+	if !e.registry.IsAdapter(agent) {
+		return "", fmt.Errorf("executor: no adapter for agent %q", agent)
 	}
 
-	// CLI path: no session tracking.
-	if !e.registry.IsTmux(agent) {
-		log.Info("executing via CLI harness")
-		harness, err := e.registry.GetCLI(agent)
-		if err != nil {
-			return "", fmt.Errorf("executor: %w", err)
-		}
-		return harness.Execute(ctx, ws.Path, message)
-	}
-
-	// Tmux path: session lifecycle.
-
-	// Look up existing active session.
-	sess, err := e.store.GetActiveSession(ctx, ws.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return "", fmt.Errorf("executor: lookup session: %w", err)
-	}
-
-	// Validate the existing session if found.
-	if sess != nil {
-		sess = e.validateSession(ctx, log, sess, agent)
-	}
-
-	// Spawn a new session if needed.
-	if sess == nil {
-		sessionName, slug, err := NewSessionName(ws.Name)
-		if err != nil {
-			return "", fmt.Errorf("executor: generate session name: %w", err)
-		}
-		log = log.With("tmux_session", sessionName)
-
-		log.Info("spawning new session")
-		if err := e.tmux.NewSession(sessionName, ws.Path); err != nil {
-			return "", fmt.Errorf("executor: create tmux session: %w", err)
-		}
-
-		harness, err := e.registry.GetTmux(agent)
-		if err != nil {
-			_ = e.tmux.KillSession(sessionName)
-			return "", fmt.Errorf("executor: %w", err)
-		}
-
-		if err := harness.Spawn(ctx, sessionName); err != nil {
-			_ = e.tmux.KillSession(sessionName)
-			return "", fmt.Errorf("executor: spawn agent: %w", err)
-		}
-
-		newSess, err := e.store.CreateSession(ctx, ws.ID, agent, slug, sessionName)
-		if err != nil {
-			_ = e.tmux.KillSession(sessionName)
-			return "", fmt.Errorf("executor: create session record: %w", err)
-		}
-		sess = newSess
-	} else {
-		log.Info("reusing existing session", "session_id", sess.ID)
-	}
-
-	// Send message and read response.
-	harness, err := e.registry.GetTmux(agent)
-	if err != nil {
-		return "", fmt.Errorf("executor: %w", err)
-	}
-
-	snapshot, err := harness.SendMessage(ctx, sess.TmuxSession, message)
-	if err != nil {
-		return "", fmt.Errorf("executor: send message: %w", err)
-	}
-
-	response, err := harness.ReadResponse(ctx, sess.TmuxSession, snapshot)
-	if err != nil {
-		if errors.Is(err, ErrResponseTimeout) {
-			_ = e.store.UpdateSessionStatus(ctx, sess.ID, string(core.SessionCrashed))
-			log.Warn("response timed out, session marked crashed")
-		}
-		return "", fmt.Errorf("executor: read response: %w", err)
-	}
-
-	// Parse status from the response.
-	status := harness.DetectStatus(response)
-	log.Info("agent status detected", "state", status.State, "detail", status.Detail)
-
-	switch status.State {
-	case AgentCrashed:
-		_ = e.store.UpdateSessionStatus(ctx, sess.ID, string(core.SessionCrashed))
-		return "", fmt.Errorf("executor: agent crashed: %s", status.Detail)
-	case AgentExited:
-		_ = e.store.UpdateSessionStatus(ctx, sess.ID, string(core.SessionExpired))
-		return "", fmt.Errorf("executor: agent exited: %s", status.Detail)
-	}
-
-	// Touch session to update last_activity.
-	if err := e.store.TouchSession(ctx, sess.ID); err != nil {
-		log.Warn("failed to touch session", "error", err)
-	}
-
-	return response, nil
+	return e.executeAdapter(ctx, log, ws, agent, message)
 }
 
-// executeAdapter handles the adapter execution path.
 func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core.Workspace, agent, message string) (string, error) {
 	log.Info("executing via adapter")
 
@@ -184,15 +76,12 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 		return "", fmt.Errorf("executor: %w", err)
 	}
 
-	// Look up existing active session.
 	sess, err := e.store.GetActiveSession(ctx, ws.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return "", fmt.Errorf("executor: lookup session: %w", err)
 	}
 
-	// Validate existing session if found.
 	if sess != nil && sess.Agent == agent {
-		// Check if adapter reports it as alive.
 		info := e.buildSessionInfo(ws, sess)
 		if !adapter.IsAlive(info) {
 			log.Info("adapter session not alive, will respawn", "session_id", sess.ID)
@@ -200,15 +89,15 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 			sess = nil
 		}
 	} else if sess != nil {
-		// Different agent, kill old session.
 		log.Info("switching agent, killing old session", "old_agent", sess.Agent, "session_id", sess.ID)
-		oldInfo := e.buildSessionInfo(ws, sess)
-		_ = adapter.Stop(ctx, oldInfo)
+		if oldAdapter, err := e.registry.GetAdapter(sess.Agent); err == nil {
+			oldInfo := e.buildSessionInfo(ws, sess)
+			_ = oldAdapter.Stop(ctx, oldInfo)
+		}
 		_ = e.store.UpdateSessionStatus(ctx, sess.ID, string(core.SessionExpired))
 		sess = nil
 	}
 
-	// Spawn a new session if needed.
 	if sess == nil {
 		sessionName, slug, err := NewSessionName(ws.Name)
 		if err != nil {
@@ -218,7 +107,6 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 
 		log.Info("spawning new adapter session")
 
-		// Create a temporary session for Spawn.
 		tempSess := &core.Session{
 			TmuxSession: sessionName,
 			Slug:        slug,
@@ -240,10 +128,8 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 		log.Info("reusing existing adapter session", "session_id", sess.ID)
 	}
 
-	// Build session info and send message.
 	info := e.buildSessionInfo(ws, sess)
 
-	// Append user message to response file.
 	if err := AppendMessage(info.ResponseFile, ResponseMessage{
 		Role:      "user",
 		Content:   message,
@@ -252,19 +138,15 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 		return "", fmt.Errorf("executor: append user message: %w", err)
 	}
 
-	// Send message via adapter (writes response to file).
 	if err := adapter.Send(ctx, info, message); err != nil {
-		// Phase 4 will add SecurityFlagError handling here.
 		return "", fmt.Errorf("executor: adapter send: %w", err)
 	}
 
-	// Read the response from the file.
 	response, err := LatestAgentMessage(info.ResponseFile)
 	if err != nil {
 		return "", fmt.Errorf("executor: read response: %w", err)
 	}
 
-	// Touch session to update last_activity.
 	if err := e.store.TouchSession(ctx, sess.ID); err != nil {
 		log.Warn("failed to touch session", "error", err)
 	}
@@ -272,26 +154,6 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 	return response, nil
 }
 
-// validateSession checks if an existing session is still valid and usable.
-// Returns nil if the session should be replaced.
-func (e *Executor) validateSession(ctx context.Context, log *slog.Logger, sess *core.Session, agent string) *core.Session {
-	if !e.tmux.HasSession(sess.TmuxSession) {
-		log.Warn("tmux session dead, marking crashed", "session_id", sess.ID)
-		_ = e.store.UpdateSessionStatus(ctx, sess.ID, string(core.SessionCrashed))
-		return nil
-	}
-
-	if sess.Agent != agent {
-		log.Info("switching agent, killing old session", "old_agent", sess.Agent, "session_id", sess.ID)
-		_ = e.tmux.KillSession(sess.TmuxSession)
-		_ = e.store.UpdateSessionStatus(ctx, sess.ID, string(core.SessionExpired))
-		return nil
-	}
-
-	return sess
-}
-
-// buildSessionInfo constructs a core.SessionInfo from workspace and session data.
 func (e *Executor) buildSessionInfo(ws core.Workspace, sess *core.Session) core.SessionInfo {
 	return core.SessionInfo{
 		Name:          sess.TmuxSession,
@@ -303,48 +165,18 @@ func (e *Executor) buildSessionInfo(ws core.Workspace, sess *core.Session) core.
 	}
 }
 
-// SpawnSession creates a new tmux session and agent process for the given
-// workspace without sending a message. Used by MCP session_restart.
 func (e *Executor) SpawnSession(ctx context.Context, ws core.Workspace, agent string) error {
 	if ws.Host != "" {
 		return ErrRemoteNotSupported
 	}
 
-	// Adapter path.
-	if e.registry.IsAdapter(agent) {
-		return e.spawnAdapterSession(ctx, ws, agent)
+	if !e.registry.IsAdapter(agent) {
+		return fmt.Errorf("executor: no adapter for agent %q", agent)
 	}
 
-	sessionName, slug, err := NewSessionName(ws.Name)
-	if err != nil {
-		return fmt.Errorf("executor: generate session name: %w", err)
-	}
-
-	if err := e.tmux.NewSession(sessionName, ws.Path); err != nil {
-		return fmt.Errorf("executor: create tmux session: %w", err)
-	}
-
-	harness, err := e.registry.GetTmux(agent)
-	if err != nil {
-		_ = e.tmux.KillSession(sessionName)
-		return fmt.Errorf("executor: %w", err)
-	}
-
-	if err := harness.Spawn(ctx, sessionName); err != nil {
-		_ = e.tmux.KillSession(sessionName)
-		return fmt.Errorf("executor: spawn agent: %w", err)
-	}
-
-	_, err = e.store.CreateSession(ctx, ws.ID, agent, slug, sessionName)
-	if err != nil {
-		_ = e.tmux.KillSession(sessionName)
-		return fmt.Errorf("executor: create session record: %w", err)
-	}
-
-	return nil
+	return e.spawnAdapterSession(ctx, ws, agent)
 }
 
-// spawnAdapterSession creates a new adapter session without sending a message.
 func (e *Executor) spawnAdapterSession(ctx context.Context, ws core.Workspace, agent string) error {
 	adapter, err := e.registry.GetAdapter(agent)
 	if err != nil {
@@ -376,23 +208,20 @@ func (e *Executor) spawnAdapterSession(ctx context.Context, ws core.Workspace, a
 	return nil
 }
 
-// KillSession finds the active session for a workspace and destroys it.
 func (e *Executor) KillSession(ctx context.Context, workspaceID int64, agent string) error {
 	sess, err := e.store.GetActiveSession(ctx, workspaceID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil // no active session to kill
+			return nil
 		}
 		return fmt.Errorf("executor: kill session lookup: %w", err)
 	}
 
-	// Adapter path.
 	if e.registry.IsAdapter(agent) {
 		adapter, err := e.registry.GetAdapter(agent)
 		if err != nil {
 			return fmt.Errorf("executor: %w", err)
 		}
-		// Build minimal SessionInfo for Stop.
 		info := core.SessionInfo{
 			Name:  sess.TmuxSession,
 			Slug:  sess.Slug,
@@ -400,10 +229,6 @@ func (e *Executor) KillSession(ctx context.Context, workspaceID int64, agent str
 		}
 		if err := adapter.Stop(ctx, info); err != nil {
 			slog.Warn("failed to stop adapter session", "tmux_session", sess.TmuxSession, "error", err)
-		}
-	} else if e.tmux.HasSession(sess.TmuxSession) {
-		if err := e.tmux.KillSession(sess.TmuxSession); err != nil {
-			slog.Warn("failed to kill tmux session", "tmux_session", sess.TmuxSession, "error", err)
 		}
 	}
 
@@ -413,7 +238,6 @@ func (e *Executor) KillSession(ctx context.Context, workspaceID int64, agent str
 	return nil
 }
 
-// ListSessions returns all sessions enriched with live tmux liveness.
 func (e *Executor) ListSessions(ctx context.Context) ([]SessionLiveInfo, error) {
 	sessions, err := e.store.ListSessions(ctx)
 	if err != nil {
