@@ -16,12 +16,15 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
 	webpkg "github.com/mylocalgpt/ai-chat/pkg/channel/web"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
+	"github.com/mylocalgpt/ai-chat/pkg/core"
+	"github.com/mylocalgpt/ai-chat/pkg/executor"
+	"github.com/mylocalgpt/ai-chat/pkg/orchestrator"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
 func runStart(args []string) {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
-	configPath := fs.String("config", "", "path to config file (default: ~/.ai-chat/config.json)")
+	configPath := fs.String("config", "", "path to config file (default: ~/.ai-chat/config.json, then ./config.json)")
 	fs.Parse(args)
 
 	// Set up structured JSON logging to stderr.
@@ -63,6 +66,19 @@ func runStart(args []string) {
 
 	st := store.New(db)
 
+	// Initialize orchestrator.
+	router := orchestrator.NewRouter(cfg.OpenRouter.APIKey)
+	orch, err := orchestrator.Setup(router, st)
+	if err != nil {
+		slog.Error("failed to set up orchestrator", "error", err)
+		os.Exit(1)
+	}
+
+	// Initialize executor.
+	tmuxRunner := executor.NewTmux()
+	registry := executor.NewHarnessRegistry(tmuxRunner)
+	exec := executor.NewExecutor(st, tmuxRunner, registry)
+
 	// Initialize Telegram adapter.
 	tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
 		BotToken:     cfg.Telegram.BotToken,
@@ -72,6 +88,65 @@ func runStart(args []string) {
 		slog.Error("failed to create telegram adapter", "error", err)
 		os.Exit(1)
 	}
+
+	// Build message handler shared by all channels.
+	handleMessage := func(send func(context.Context, core.OutboundMessage) error) func(context.Context, core.InboundMessage) {
+		return func(ctx context.Context, msg core.InboundMessage) {
+			log := slog.With("channel", msg.Channel, "sender", msg.SenderID)
+
+			result, err := orch.HandleMessage(ctx, msg)
+			if err != nil {
+				log.Error("orchestrator failed", "error", err)
+				send(ctx, core.OutboundMessage{
+					Channel:     msg.Channel,
+					RecipientID: msg.SenderID,
+					Content:     "Something went wrong processing your message.",
+				})
+				return
+			}
+
+			response := result.Response
+			if result.Action.Type == orchestrator.ActionAgentTask {
+				ws, err := st.GetWorkspace(ctx, result.Action.Workspace)
+				if err != nil {
+					log.Error("workspace not found", "workspace", result.Action.Workspace, "error", err)
+					send(ctx, core.OutboundMessage{
+						Channel:     msg.Channel,
+						RecipientID: msg.SenderID,
+						Content:     "Workspace not found: " + result.Action.Workspace,
+					})
+					return
+				}
+				agent := result.Action.Agent
+				if agent == "" {
+					agent = "claude"
+				}
+				resp, err := exec.Execute(ctx, *ws, agent, msg.Content)
+				if err != nil {
+					log.Error("executor failed", "error", err)
+					send(ctx, core.OutboundMessage{
+						Channel:     msg.Channel,
+						RecipientID: msg.SenderID,
+						Content:     "Agent error: " + err.Error(),
+					})
+					return
+				}
+				response = resp
+			}
+
+			if response != "" {
+				send(ctx, core.OutboundMessage{
+					Channel:     msg.Channel,
+					RecipientID: msg.SenderID,
+					Content:     response,
+					ReplyToID:   msg.ID,
+				})
+			}
+		}
+	}
+
+	// Wire message handlers.
+	tg.SetMessageHandler(handleMessage(tg.Send))
 
 	// Signal handling for graceful shutdown.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -92,6 +167,7 @@ func runStart(args []string) {
 
 	// Start web channel (registers /ws on mux).
 	webCh := webpkg.NewWebChannel(st, mux)
+	webCh.SetMessageHandler(handleMessage(webCh.Send))
 	if err := webCh.Start(ctx); err != nil {
 		slog.Error("failed to start web channel", "error", err)
 		os.Exit(1)
