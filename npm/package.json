@@ -1,0 +1,12 @@
+{
+  "name": "@mylocalgpt/ai-chat",
+  "version": "0.0.1",
+  "description": "Local-first AI chat system routing messages to agents in tmux sessions",
+  "bin": { "ai-chat": "./bin/cli.js" },
+  "scripts": { "postinstall": "node install.js" },
+  "os": ["darwin", "linux", "win32"],
+  "cpu": ["x64", "arm64"],
+  "keywords": ["mcp", "ai", "chat", "telegram", "tmux", "claude", "opencode"],
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/mylocalgpt/ai-chat.git" }
+}
