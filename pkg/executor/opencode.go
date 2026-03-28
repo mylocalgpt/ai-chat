@@ -3,77 +3,102 @@ package executor
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
 
-// OpenCodeHarness implements AgentHarness for OpenCode running in tmux.
-type OpenCodeHarness struct {
+// OpenCodeAdapter implements AgentAdapter for OpenCode running in tmux.
+type OpenCodeAdapter struct {
 	tmux         tmuxRunner
 	pollInterval time.Duration
 	timeout      time.Duration
+	spawnTimeout time.Duration
 }
 
-// NewOpenCodeHarness returns a new OpenCode harness.
-func NewOpenCodeHarness(tmux tmuxRunner) *OpenCodeHarness {
-	return &OpenCodeHarness{
+// NewOpenCodeAdapter returns a new OpenCode adapter.
+func NewOpenCodeAdapter(tmux tmuxRunner) *OpenCodeAdapter {
+	return &OpenCodeAdapter{
 		tmux:         tmux,
 		pollInterval: 1 * time.Second,
 		timeout:      5 * time.Minute,
+		spawnTimeout: 20 * time.Second,
 	}
 }
 
 // openCodeReadyRe matches the OpenCode input prompt area.
 var openCodeReadyRe = regexp.MustCompile(`(?im)(>\s*$|ask anything|input|opencode)`)
 
-// Spawn starts OpenCode in the given tmux session and waits for the TUI to
-// initialize.
-func (h *OpenCodeHarness) Spawn(ctx context.Context, sessionName string) error {
-	if err := h.tmux.SendKeys(sessionName, "opencode"); err != nil {
-		return fmt.Errorf("opencode spawn: %w", err)
+// Name returns the adapter name.
+func (a *OpenCodeAdapter) Name() string {
+	return "opencode"
+}
+
+// Spawn starts OpenCode in a tmux session and creates the response file.
+func (a *OpenCodeAdapter) Spawn(ctx context.Context, session core.SessionInfo) error {
+	// Create tmux session.
+	if err := a.tmux.NewSession(session.Name, session.WorkspacePath); err != nil {
+		return fmt.Errorf("opencode spawn: create tmux session: %w", err)
 	}
 
-	deadline := time.After(20 * time.Second)
-	ticker := time.NewTicker(1 * time.Second)
+	// Send opencode command.
+	if err := a.tmux.SendKeys(session.Name, "opencode"); err != nil {
+		_ = a.tmux.KillSession(session.Name)
+		return fmt.Errorf("opencode spawn: send keys: %w", err)
+	}
+
+	// Wait for TUI ready prompt.
+	deadline := time.After(a.spawnTimeout)
+	ticker := time.NewTicker(a.pollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			_ = a.tmux.KillSession(session.Name)
 			return ctx.Err()
 		case <-deadline:
+			_ = a.tmux.KillSession(session.Name)
 			return ErrSpawnTimeout
 		case <-ticker.C:
-			out, err := h.tmux.CapturePaneRaw(sessionName, 200)
+			out, err := a.tmux.CapturePaneRaw(session.Name, 200)
 			if err != nil {
 				continue
 			}
 			clean := StripANSI(out)
 			if openCodeReadyRe.MatchString(clean) {
+				// Create response file. Use the directory from session.ResponseFile.
+				dir := filepath.Dir(session.ResponseFile)
+				_, err := NewResponseFile(dir, session)
+				if err != nil {
+					_ = a.tmux.KillSession(session.Name)
+					return fmt.Errorf("opencode spawn: create response file: %w", err)
+				}
 				return nil
 			}
 		}
 	}
 }
 
-// SendMessage captures the current pane state and sends the message.
-func (h *OpenCodeHarness) SendMessage(ctx context.Context, sessionName string, message string) (string, error) {
-	snapshot, err := h.tmux.CapturePaneRaw(sessionName, 200)
+// Send sends a message to OpenCode and writes the response to the file.
+func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, message string) error {
+	// Capture pre-send snapshot.
+	snapshot, err := a.tmux.CapturePaneRaw(session.Name, 200)
 	if err != nil {
-		return "", fmt.Errorf("opencode send: capture snapshot: %w", err)
+		return fmt.Errorf("opencode send: capture snapshot: %w", err)
 	}
-	if err := h.tmux.SendKeys(sessionName, message); err != nil {
-		return "", fmt.Errorf("opencode send: %w", err)
-	}
-	return snapshot, nil
-}
 
-// ReadResponse polls capture-pane until OpenCode returns to its input prompt,
-// then extracts the new content since the pre-send snapshot.
-func (h *OpenCodeHarness) ReadResponse(ctx context.Context, sessionName string, snapshot string) (string, error) {
-	deadline := time.After(h.timeout)
-	ticker := time.NewTicker(h.pollInterval)
+	// Send message.
+	if err := a.tmux.SendKeys(session.Name, message); err != nil {
+		return fmt.Errorf("opencode send: send keys: %w", err)
+	}
+
+	// Poll for response.
+	deadline := time.After(a.timeout)
+	ticker := time.NewTicker(a.pollInterval)
 	defer ticker.Stop()
 
 	snapshotLines := strings.Split(snapshot, "\n")
@@ -81,11 +106,11 @@ func (h *OpenCodeHarness) ReadResponse(ctx context.Context, sessionName string, 
 	for {
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return ctx.Err()
 		case <-deadline:
-			return "", ErrResponseTimeout
+			return ErrResponseTimeout
 		case <-ticker.C:
-			raw, err := h.tmux.CapturePaneRaw(sessionName, 200)
+			raw, err := a.tmux.CapturePaneRaw(session.Name, 200)
 			if err != nil {
 				continue
 			}
@@ -101,20 +126,38 @@ func (h *OpenCodeHarness) ReadResponse(ctx context.Context, sessionName string, 
 
 			// Check if the input prompt has reappeared.
 			if openCodeReadyRe.MatchString(clean) && len(newContent) > 1 {
-				return strings.TrimSpace(clean), nil
+				// Append user message to response file.
+				if err := AppendMessage(session.ResponseFile, ResponseMessage{
+					Role:      "user",
+					Content:   message,
+					Timestamp: time.Now().UTC(),
+				}); err != nil {
+					return fmt.Errorf("opencode send: append user message: %w", err)
+				}
+
+				// Append agent response to response file.
+				if err := AppendMessage(session.ResponseFile, ResponseMessage{
+					Role:      "agent",
+					Content:   strings.TrimSpace(clean),
+					Timestamp: time.Now().UTC(),
+				}); err != nil {
+					return fmt.Errorf("opencode send: append agent message: %w", err)
+				}
+
+				return nil
 			}
 		}
 	}
 }
 
-// IsReady checks if OpenCode's input prompt is visible.
-func (h *OpenCodeHarness) IsReady(ctx context.Context, sessionName string) (bool, error) {
-	raw, err := h.tmux.CapturePaneRaw(sessionName, 50)
-	if err != nil {
-		return false, err
-	}
-	clean := StripANSI(raw)
-	return openCodeReadyRe.MatchString(clean), nil
+// IsAlive reports whether the tmux session is still running.
+func (a *OpenCodeAdapter) IsAlive(session core.SessionInfo) bool {
+	return a.tmux.HasSession(session.Name)
+}
+
+// Stop kills the tmux session.
+func (a *OpenCodeAdapter) Stop(_ context.Context, session core.SessionInfo) error {
+	return a.tmux.KillSession(session.Name)
 }
 
 // OpenCode-specific status patterns.
@@ -124,7 +167,8 @@ var (
 )
 
 // DetectStatus parses output for OpenCode status signals.
-func (h *OpenCodeHarness) DetectStatus(output string) AgentStatus {
+// Kept for diagnostics even though not part of AgentAdapter interface.
+func (a *OpenCodeAdapter) DetectStatus(output string) AgentStatus {
 	if openCodeRateLimitRe.MatchString(output) {
 		return AgentStatus{
 			State:  AgentRateLimited,

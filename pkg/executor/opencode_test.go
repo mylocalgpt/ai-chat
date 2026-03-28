@@ -3,7 +3,7 @@ package executor
 import "testing"
 
 func TestOpenCodeDetectStatus(t *testing.T) {
-	h := NewOpenCodeHarness(NewTmux())
+	a := NewOpenCodeAdapter(NewTmux())
 
 	tests := []struct {
 		name      string
@@ -59,7 +59,7 @@ func TestOpenCodeDetectStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status := h.DetectStatus(tt.output)
+			status := a.DetectStatus(tt.output)
 			if status.State != tt.wantState {
 				t.Errorf("DetectStatus() state = %q, want %q (detail: %s)", status.State, tt.wantState, status.Detail)
 			}

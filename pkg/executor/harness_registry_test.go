@@ -4,44 +4,28 @@ import (
 	"testing"
 )
 
-func TestRegistryGetTmux(t *testing.T) {
+func TestRegistryGetAdapter(t *testing.T) {
 	r := NewHarnessRegistry(NewTmux())
 
-	// Known tmux agents should return a harness.
-	for _, agent := range []string{"opencode"} {
-		h, err := r.GetTmux(agent)
+	// Known adapters should return an adapter.
+	for _, agent := range []string{"opencode", "copilot"} {
+		a, err := r.GetAdapter(agent)
 		if err != nil {
-			t.Errorf("GetTmux(%q) unexpected error: %v", agent, err)
+			t.Errorf("GetAdapter(%q) unexpected error: %v", agent, err)
 		}
-		if h == nil {
-			t.Errorf("GetTmux(%q) returned nil harness", agent)
+		if a == nil {
+			t.Errorf("GetAdapter(%q) returned nil adapter", agent)
 		}
 	}
 
 	// Unknown agent should return error.
-	_, err := r.GetTmux("unknown")
+	_, err := r.GetAdapter("unknown")
 	if err == nil {
-		t.Error("GetTmux(unknown) expected error, got nil")
+		t.Error("GetAdapter(unknown) expected error, got nil")
 	}
 }
 
-func TestRegistryGetCLI(t *testing.T) {
-	r := NewHarnessRegistry(NewTmux())
-
-	// Unknown agent should return error.
-	_, err := r.GetCLI("unknown")
-	if err == nil {
-		t.Error("GetCLI(unknown) expected error, got nil")
-	}
-
-	// Copilot is not registered by default.
-	_, err = r.GetCLI("copilot")
-	if err == nil {
-		t.Error("GetCLI(copilot) expected error (not registered by default)")
-	}
-}
-
-func TestRegistryIsTmux(t *testing.T) {
+func TestRegistryIsAdapter(t *testing.T) {
 	r := NewHarnessRegistry(NewTmux())
 
 	tests := []struct {
@@ -49,14 +33,14 @@ func TestRegistryIsTmux(t *testing.T) {
 		want  bool
 	}{
 		{"opencode", true},
-		{"copilot", false},
+		{"copilot", true},
 		{"unknown", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
-			if got := r.IsTmux(tt.agent); got != tt.want {
-				t.Errorf("IsTmux(%q) = %v, want %v", tt.agent, got, tt.want)
+			if got := r.IsAdapter(tt.agent); got != tt.want {
+				t.Errorf("IsAdapter(%q) = %v, want %v", tt.agent, got, tt.want)
 			}
 		})
 	}
@@ -66,8 +50,8 @@ func TestRegistryKnownAgents(t *testing.T) {
 	r := NewHarnessRegistry(NewTmux())
 	agents := r.KnownAgents()
 
-	// Should include opencode (sorted).
-	want := []string{"opencode"}
+	// Should include opencode and copilot (sorted).
+	want := []string{"copilot", "opencode"}
 	if len(agents) != len(want) {
 		t.Fatalf("KnownAgents() = %v, want %v", agents, want)
 	}

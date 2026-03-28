@@ -19,7 +19,9 @@ func NewHarnessRegistry(tmux tmuxRunner) *HarnessRegistry {
 		cliHarnesses:  make(map[string]CLIHarness),
 		adapters:      make(map[string]AgentAdapter),
 	}
-	r.tmuxHarnesses["opencode"] = NewOpenCodeHarness(tmux)
+	// Register adapters.
+	r.adapters["opencode"] = NewOpenCodeAdapter(tmux)
+	r.adapters["copilot"] = NewCopilotAdapter()
 	return r
 }
 
