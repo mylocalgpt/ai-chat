@@ -1,44 +1,6 @@
 package orchestrator
 
-import (
-	"encoding/json"
-
-	"github.com/mylocalgpt/ai-chat/pkg/core"
-)
-
-// Action type constants.
-const (
-	ActionWorkspaceSwitch = "workspace_switch"
-	ActionAgentTask       = "agent_task"
-	ActionStatus          = "status"
-	ActionDirectAnswer    = "direct_answer"
-	ActionMetaCommand     = "meta_command"
-)
-
-var validActionTypes = map[string]bool{
-	ActionWorkspaceSwitch: true,
-	ActionAgentTask:       true,
-	ActionStatus:          true,
-	ActionDirectAnswer:    true,
-	ActionMetaCommand:     true,
-}
-
-// Action represents the orchestrator's decision about how to handle a message.
-type Action struct {
-	Type       string  `json:"type"`
-	Workspace  string  `json:"workspace"`
-	Agent      string  `json:"agent"`
-	Content    string  `json:"content"`
-	Confidence float64 `json:"confidence"`
-	Reasoning  string  `json:"reasoning"`
-}
-
-// UserContext holds the current state for a user in a channel.
-type UserContext struct {
-	SenderID        string
-	ActiveWorkspace *core.Workspace
-	Channel         string
-}
+import "encoding/json"
 
 // Message represents a single chat message in OpenAI-compatible format.
 type Message struct {

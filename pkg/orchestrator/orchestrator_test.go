@@ -6,550 +6,246 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
-	"github.com/mylocalgpt/ai-chat/pkg/store"
+
+	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// modelTracker records which models were requested and returns per-model responses.
-type modelTracker struct {
-	mu       sync.Mutex
-	called   []string
-	respond  map[string]Action // model -> action to return
-	failFor  map[string]bool   // model -> return error
+// testInput is the input schema for the test tool.
+type testInput struct {
+	Echo string `json:"echo"`
 }
 
-func newModelTracker() *modelTracker {
-	return &modelTracker{
-		respond: make(map[string]Action),
-		failFor: make(map[string]bool),
-	}
-}
-
-func (mt *modelTracker) handler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req ChatRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-
-		mt.mu.Lock()
-		mt.called = append(mt.called, req.Model)
-		mt.mu.Unlock()
-
-		if mt.failFor[req.Model] {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte("model error"))
-			return
-		}
-
-		action, ok := mt.respond[req.Model]
-		if !ok {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte("no response configured for model"))
-			return
-		}
-
-		actionJSON, _ := json.Marshal(action)
-		_, _ = w.Write(chatResponseJSON(string(actionJSON)))
-	}
-}
-
-func (mt *modelTracker) calledModels() []string {
-	mt.mu.Lock()
-	defer mt.mu.Unlock()
-	result := make([]string, len(mt.called))
-	copy(result, mt.called)
-	return result
-}
-
-func newTestStore(t *testing.T) *store.Store {
+// newTestMCPSession creates an MCP server with a simple "echo" tool and returns
+// an in-process client session connected to it.
+func newTestMCPSession(t *testing.T) *gomcp.ClientSession {
 	t.Helper()
-	db, err := store.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Migrate(db); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return store.New(db)
-}
 
-func TestClassify_HighConfidence_NoSecondOpinion(t *testing.T) {
-	mt := newModelTracker()
-	mt.respond["primary/model"] = Action{
-		Type:       ActionAgentTask,
-		Content:    "do the work",
-		Confidence: 0.9,
-		Reasoning:  "clear task",
-	}
-
-	srv := httptest.NewServer(mt.handler())
-	defer srv.Close()
-
-	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
-	orch := NewOrchestrator(router, st, "primary/model", "second/model")
-
-	action, err := orch.Classify(context.Background(), core.InboundMessage{
-		SenderID: "user1",
-		Channel:  "telegram",
-		Content:  "fix the tests",
+	srv := gomcp.NewServer(
+		&gomcp.Implementation{Name: "test-server", Version: "0.1.0"},
+		nil,
+	)
+	gomcp.AddTool(srv, &gomcp.Tool{
+		Name:        "echo",
+		Description: "Returns the input message",
+	}, func(_ context.Context, _ *gomcp.CallToolRequest, input testInput) (*gomcp.CallToolResult, any, error) {
+		return &gomcp.CallToolResult{
+			Content: []gomcp.Content{
+				&gomcp.TextContent{Text: fmt.Sprintf("echoed: %s", input.Echo)},
+			},
+		}, nil, nil
 	})
+
+	clientTransport, serverTransport := gomcp.NewInMemoryTransports()
+
+	ctx := context.Background()
+	_, err := srv.Connect(ctx, serverTransport, nil)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if action.Type != ActionAgentTask {
-		t.Errorf("type = %q, want %q", action.Type, ActionAgentTask)
+		t.Fatalf("server connect: %v", err)
 	}
 
-	called := mt.calledModels()
-	if len(called) != 1 {
-		t.Errorf("expected 1 model call, got %d: %v", len(called), called)
+	client := gomcp.NewClient(
+		&gomcp.Implementation{Name: "test-client", Version: "0.1.0"},
+		nil,
+	)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
 	}
-	if called[0] != "primary/model" {
-		t.Errorf("expected primary model call, got %q", called[0])
+
+	return session
+}
+
+// callTracker records requests and returns canned responses in sequence.
+type callTracker struct {
+	mu        sync.Mutex
+	calls     int
+	responses []string // raw JSON response bodies
+}
+
+func (ct *callTracker) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ct.mu.Lock()
+		idx := ct.calls
+		ct.calls++
+		ct.mu.Unlock()
+
+		if idx < len(ct.responses) {
+			_, _ = w.Write([]byte(ct.responses[idx]))
+		} else {
+			// Default: return a stop response
+			_, _ = w.Write(chatResponseJSON("fallback response"))
+		}
 	}
 }
 
-func TestClassify_LowConfidence_SecondOpinionWins(t *testing.T) {
-	mt := newModelTracker()
-	mt.respond["primary/model"] = Action{
-		Type:       ActionAgentTask,
-		Content:    "maybe agent",
-		Confidence: 0.5,
-		Reasoning:  "unsure",
-	}
-	mt.respond["second/model"] = Action{
-		Type:       ActionDirectAnswer,
-		Content:    "this is a direct answer",
-		Confidence: 0.8,
-		Reasoning:  "confident direct",
-	}
+func TestHandleMessage_TextResponse(t *testing.T) {
+	session := newTestMCPSession(t)
 
-	srv := httptest.NewServer(mt.handler())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(chatResponseJSON("Hello! How can I help?"))
+	}))
 	defer srv.Close()
 
 	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
-	orch := NewOrchestrator(router, st, "primary/model", "second/model")
+	orch := NewOrchestrator(router, session, "test/model")
 
-	action, err := orch.Classify(context.Background(), core.InboundMessage{
+	if err := orch.Init(context.Background()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	got, err := orch.HandleMessage(context.Background(), core.InboundMessage{
 		SenderID: "user1",
-		Channel:  "telegram",
-		Content:  "what time is it?",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if action.Type != ActionDirectAnswer {
-		t.Errorf("type = %q, want %q", action.Type, ActionDirectAnswer)
-	}
-	if action.Confidence != 0.8 {
-		t.Errorf("confidence = %f, want 0.8", action.Confidence)
-	}
-
-	called := mt.calledModels()
-	if len(called) != 2 {
-		t.Fatalf("expected 2 model calls, got %d: %v", len(called), called)
-	}
-}
-
-func TestClassify_LowConfidence_PrimaryWins(t *testing.T) {
-	mt := newModelTracker()
-	mt.respond["primary/model"] = Action{
-		Type:       ActionAgentTask,
-		Content:    "probably agent",
-		Confidence: 0.5,
-		Reasoning:  "unsure",
-	}
-	mt.respond["second/model"] = Action{
-		Type:       ActionStatus,
-		Content:    "hmm status",
-		Confidence: 0.3,
-		Reasoning:  "even less sure",
-	}
-
-	srv := httptest.NewServer(mt.handler())
-	defer srv.Close()
-
-	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
-	orch := NewOrchestrator(router, st, "primary/model", "second/model")
-
-	action, err := orch.Classify(context.Background(), core.InboundMessage{
-		SenderID: "user1",
-		Channel:  "telegram",
-		Content:  "ambiguous message",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if action.Type != ActionAgentTask {
-		t.Errorf("type = %q, want %q (primary should win)", action.Type, ActionAgentTask)
-	}
-}
-
-func TestClassify_PrimaryError(t *testing.T) {
-	mt := newModelTracker()
-	mt.failFor["primary/model"] = true
-
-	srv := httptest.NewServer(mt.handler())
-	defer srv.Close()
-
-	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
-	orch := NewOrchestrator(router, st, "primary/model", "second/model")
-
-	_, err := orch.Classify(context.Background(), core.InboundMessage{
-		SenderID: "user1",
-		Channel:  "telegram",
-		Content:  "test",
-	})
-	if err == nil {
-		t.Fatal("expected error from primary model failure")
-	}
-	if !strings.Contains(err.Error(), "primary classification") {
-		t.Errorf("error %q should contain 'primary classification'", err.Error())
-	}
-}
-
-func TestClassify_SecondOpinionError_FallbackToPrimary(t *testing.T) {
-	mt := newModelTracker()
-	mt.respond["primary/model"] = Action{
-		Type:       ActionAgentTask,
-		Content:    "low confidence task",
-		Confidence: 0.4,
-		Reasoning:  "not sure",
-	}
-	mt.failFor["second/model"] = true
-
-	srv := httptest.NewServer(mt.handler())
-	defer srv.Close()
-
-	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
-	orch := NewOrchestrator(router, st, "primary/model", "second/model")
-
-	action, err := orch.Classify(context.Background(), core.InboundMessage{
-		SenderID: "user1",
-		Channel:  "telegram",
-		Content:  "do something",
-	})
-	if err != nil {
-		t.Fatalf("should not return error on second opinion failure: %v", err)
-	}
-	if action.Type != ActionAgentTask {
-		t.Errorf("should fall back to primary, got type %q", action.Type)
-	}
-}
-
-func TestClassify_NoUserContext(t *testing.T) {
-	mt := newModelTracker()
-	mt.respond["primary/model"] = Action{
-		Type:       ActionMetaCommand,
-		Content:    "list workspaces",
-		Confidence: 0.85,
-		Reasoning:  "meta command",
-	}
-
-	srv := httptest.NewServer(mt.handler())
-	defer srv.Close()
-
-	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
-	// Don't set up any user context - should work with nil workspace
-	orch := NewOrchestrator(router, st, "primary/model", "second/model")
-
-	action, err := orch.Classify(context.Background(), core.InboundMessage{
-		SenderID: "newuser",
-		Channel:  "telegram",
-		Content:  "list workspaces",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if action.Type != ActionMetaCommand {
-		t.Errorf("type = %q, want %q", action.Type, ActionMetaCommand)
-	}
-}
-
-func TestClassify_WithThreshold(t *testing.T) {
-	mt := newModelTracker()
-	mt.respond["primary/model"] = Action{
-		Type:       ActionAgentTask,
-		Content:    "task",
-		Confidence: 0.6,
-		Reasoning:  "moderate confidence",
-	}
-
-	srv := httptest.NewServer(mt.handler())
-	defer srv.Close()
-
-	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
-	orch := NewOrchestrator(router, st, "primary/model", "second/model").WithThreshold(0.5)
-
-	action, err := orch.Classify(context.Background(), core.InboundMessage{
-		SenderID: "user1",
-		Channel:  "telegram",
-		Content:  "do work",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if action.Type != ActionAgentTask {
-		t.Errorf("type = %q, want %q", action.Type, ActionAgentTask)
-	}
-
-	// With threshold 0.5, confidence 0.6 should not trigger second opinion
-	called := mt.calledModels()
-	if len(called) != 1 {
-		t.Errorf("expected 1 model call (no second opinion with threshold 0.5), got %d: %v", len(called), called)
-	}
-}
-
-func TestClassify_WithActiveWorkspace(t *testing.T) {
-	mt := newModelTracker()
-	mt.respond["primary/model"] = Action{
-		Type:       ActionAgentTask,
-		Content:    "fix it",
-		Confidence: 0.9,
-		Reasoning:  "clear task in workspace",
-	}
-
-	srv := httptest.NewServer(mt.handler())
-	defer srv.Close()
-
-	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
-
-	// Set up a workspace and user context
-	ws, err := st.CreateWorkspace(context.Background(), "myproject", "/home/user/myproject", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = st.SetActiveWorkspace(context.Background(), "user1", "telegram", ws.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	orch := NewOrchestrator(router, st, "primary/model", "second/model")
-
-	action, err := orch.Classify(context.Background(), core.InboundMessage{
-		SenderID: "user1",
-		Channel:  "telegram",
-		Content:  "fix the bug",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	_ = action
-	_ = fmt.Sprintf("action: %+v", action) // verify it doesn't panic
-}
-
-func TestClassify_UsesCachedModels(t *testing.T) {
-	// Set up model configs in the store so the cache loads them
-	mt := newModelTracker()
-	mt.respond["cached/primary"] = Action{
-		Type:       ActionDirectAnswer,
-		Content:    "from cached model",
-		Confidence: 0.95,
-		Reasoning:  "cached",
-	}
-
-	srv := httptest.NewServer(mt.handler())
-	defer srv.Close()
-
-	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
-
-	// Seed model configs pointing to "cached/primary" and "cached/second"
-	if err := st.SetModelConfig(context.Background(), store.ModelConfig{
-		Role:     "router",
-		Provider: "https://openrouter.ai/api/v1",
-		Model:    "cached/primary",
-		Metadata: `{"threshold": 0.8}`,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SetModelConfig(context.Background(), store.ModelConfig{
-		Role:     "second_opinion",
-		Provider: "https://openrouter.ai/api/v1",
-		Model:    "cached/second",
-		Metadata: "{}",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Constructor uses different model names, but cache should override
-	orch := NewOrchestrator(router, st, "constructor/primary", "constructor/second")
-
-	action, err := orch.Classify(context.Background(), core.InboundMessage{
-		SenderID: "user1",
-		Channel:  "telegram",
+		Channel:  "test",
 		Content:  "hello",
-	})
+	}, "No active workspace.")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("HandleMessage: %v", err)
 	}
-	if action.Content != "from cached model" {
-		t.Errorf("expected cached model response, got %q", action.Content)
-	}
-
-	// Verify the cached model was called, not the constructor model
-	called := mt.calledModels()
-	if len(called) != 1 || called[0] != "cached/primary" {
-		t.Errorf("expected call to 'cached/primary', got %v", called)
+	if got != "Hello! How can I help?" {
+		t.Errorf("got %q, want %q", got, "Hello! How can I help?")
 	}
 }
 
-func TestSeedDefaults(t *testing.T) {
-	st := newTestStore(t)
-	ctx := context.Background()
+func TestHandleMessage_ToolCallThenText(t *testing.T) {
+	session := newTestMCPSession(t)
 
-	if err := SeedDefaults(ctx, st); err != nil {
-		t.Fatalf("SeedDefaults: %v", err)
+	// First response: tool call. Second response: final text.
+	toolCallResp := map[string]any{
+		"choices": []map[string]any{
+			{
+				"finish_reason": "tool_calls",
+				"message": map[string]any{
+					"content": "",
+					"tool_calls": []map[string]any{
+						{
+							"id":   "call_1",
+							"type": "function",
+							"function": map[string]any{
+								"name":      "echo",
+								"arguments": `{"echo":"test message"}`,
+							},
+						},
+					},
+				},
+			},
+		},
 	}
+	toolCallJSON, _ := json.Marshal(toolCallResp)
 
-	configs, err := st.ListModelConfigs(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(configs) != 2 {
-		t.Fatalf("expected 2 default configs, got %d", len(configs))
-	}
-}
-
-func TestSeedDefaults_Idempotent(t *testing.T) {
-	st := newTestStore(t)
-	ctx := context.Background()
-
-	// Seed custom config first
-	if err := st.SetModelConfig(ctx, store.ModelConfig{
-		Role:     "router",
-		Provider: "custom",
-		Model:    "custom/model",
-		Metadata: "{}",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// SeedDefaults should not overwrite
-	if err := SeedDefaults(ctx, st); err != nil {
-		t.Fatalf("SeedDefaults: %v", err)
+	ct := &callTracker{
+		responses: []string{
+			string(toolCallJSON),
+			string(chatResponseJSON("The echo tool returned: echoed: test message")),
+		},
 	}
 
-	cfg, err := st.GetModelConfig(ctx, "router")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Model != "custom/model" {
-		t.Errorf("model = %q, want 'custom/model' (seed should not overwrite)", cfg.Model)
-	}
-}
-
-func TestThresholdFromMetadata(t *testing.T) {
-	mt := newModelTracker()
-	mt.respond["cached/primary"] = Action{
-		Type:       ActionAgentTask,
-		Content:    "task",
-		Confidence: 0.55,
-		Reasoning:  "moderate",
-	}
-	mt.respond["cached/second"] = Action{
-		Type:       ActionAgentTask,
-		Content:    "task2",
-		Confidence: 0.6,
-		Reasoning:  "slightly better",
-	}
-
-	srv := httptest.NewServer(mt.handler())
+	srv := httptest.NewServer(ct.handler())
 	defer srv.Close()
 
 	router := NewRouter("test-key").WithBaseURL(srv.URL)
-	st := newTestStore(t)
+	orch := NewOrchestrator(router, session, "test/model")
 
-	// Set threshold to 0.5 via metadata
-	if err := st.SetModelConfig(context.Background(), store.ModelConfig{
-		Role:     "router",
-		Provider: "https://openrouter.ai/api/v1",
-		Model:    "cached/primary",
-		Metadata: `{"threshold": 0.5}`,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SetModelConfig(context.Background(), store.ModelConfig{
-		Role:     "second_opinion",
-		Provider: "https://openrouter.ai/api/v1",
-		Model:    "cached/second",
-		Metadata: "{}",
-	}); err != nil {
-		t.Fatal(err)
+	if err := orch.Init(context.Background()); err != nil {
+		t.Fatalf("Init: %v", err)
 	}
 
-	orch := NewOrchestrator(router, st, "fallback/primary", "fallback/second")
-
-	_, err := orch.Classify(context.Background(), core.InboundMessage{
+	got, err := orch.HandleMessage(context.Background(), core.InboundMessage{
 		SenderID: "user1",
-		Channel:  "telegram",
-		Content:  "do work",
-	})
+		Channel:  "test",
+		Content:  "echo something",
+	}, "")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if got != "The echo tool returned: echoed: test message" {
+		t.Errorf("got %q", got)
 	}
 
-	// With threshold 0.5 and confidence 0.55, second opinion should NOT be triggered
-	called := mt.calledModels()
-	if len(called) != 1 {
-		t.Errorf("expected 1 call with cached threshold 0.5, got %d: %v", len(called), called)
-	}
-}
-
-func TestCacheIsStale(t *testing.T) {
-	cache := newModelCache(0) // TTL of 0 means always stale
-	if !cache.isStale() {
-		t.Error("new cache should be stale")
-	}
-
-	cache.refresh([]store.ModelConfig{
-		{Role: "router", Model: "test"},
-	})
-
-	// With TTL of 0, cache is immediately stale again
-	if !cache.isStale() {
-		t.Error("cache with 0 TTL should always be stale after refresh")
+	ct.mu.Lock()
+	calls := ct.calls
+	ct.mu.Unlock()
+	if calls != 2 {
+		t.Errorf("expected 2 router calls, got %d", calls)
 	}
 }
 
-func TestCacheRefresh(t *testing.T) {
-	cache := newModelCache(defaultCacheTTL)
+func TestHandleMessage_MaxIterations(t *testing.T) {
+	session := newTestMCPSession(t)
 
-	cache.refresh([]store.ModelConfig{
-		{Role: "router", Model: "model-a"},
-		{Role: "second_opinion", Model: "model-b"},
-	})
+	// Always return tool calls to exhaust the loop.
+	toolCallResp := map[string]any{
+		"choices": []map[string]any{
+			{
+				"finish_reason": "tool_calls",
+				"message": map[string]any{
+					"content": "",
+					"tool_calls": []map[string]any{
+						{
+							"id":   "call_loop",
+							"type": "function",
+							"function": map[string]any{
+								"name":      "echo",
+								"arguments": `{"echo":"loop"}`,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	toolCallJSON, _ := json.Marshal(toolCallResp)
 
-	cfg, ok := cache.get("router")
-	if !ok {
-		t.Fatal("expected router config in cache")
-	}
-	if cfg.Model != "model-a" {
-		t.Errorf("model = %q, want 'model-a'", cfg.Model)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(toolCallJSON)
+	}))
+	defer srv.Close()
+
+	router := NewRouter("test-key").WithBaseURL(srv.URL)
+	orch := NewOrchestrator(router, session, "test/model")
+
+	if err := orch.Init(context.Background()); err != nil {
+		t.Fatalf("Init: %v", err)
 	}
 
-	cfg, ok = cache.get("second_opinion")
-	if !ok {
-		t.Fatal("expected second_opinion config in cache")
+	got, err := orch.HandleMessage(context.Background(), core.InboundMessage{
+		SenderID: "user1",
+		Channel:  "test",
+		Content:  "loop forever",
+	}, "")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
 	}
-	if cfg.Model != "model-b" {
-		t.Errorf("model = %q, want 'model-b'", cfg.Model)
+	if got != "I wasn't able to complete that request." {
+		t.Errorf("got %q, want fallback message", got)
+	}
+}
+
+func TestInit_LoadsTools(t *testing.T) {
+	session := newTestMCPSession(t)
+
+	router := NewRouter("test-key")
+	orch := NewOrchestrator(router, session, "test/model")
+
+	if err := orch.Init(context.Background()); err != nil {
+		t.Fatalf("Init: %v", err)
 	}
 
-	_, ok = cache.get("nonexistent")
-	if ok {
-		t.Error("should not find nonexistent role")
+	if len(orch.tools) == 0 {
+		t.Fatal("expected at least one tool after Init")
+	}
+
+	found := false
+	for _, td := range orch.tools {
+		if td.Function.Name == "echo" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected to find 'echo' tool")
 	}
 }
