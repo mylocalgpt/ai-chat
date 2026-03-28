@@ -44,6 +44,7 @@ type Manager struct {
 	adapters   AdapterRegistry
 	proxy      *executor.SecurityProxy
 	responseCh chan core.ResponseEvent
+	watcher    *Watcher
 	cfg        ManagerConfig
 	mu         sync.Mutex
 }
@@ -69,11 +70,15 @@ func NewManager(store sessionStore, adapters AdapterRegistry, proxy *executor.Se
 		cfg.ResponsesDir = executor.DefaultResponseDir()
 	}
 
+	responseCh := make(chan core.ResponseEvent, 100)
+	watcher := NewWatcher(cfg.ResponsesDir, responseCh, store)
+
 	return &Manager{
 		store:      store,
 		adapters:   adapters,
 		proxy:      proxy,
-		responseCh: make(chan core.ResponseEvent, 100),
+		responseCh: responseCh,
+		watcher:    watcher,
 		cfg:        cfg,
 	}
 }
@@ -365,6 +370,10 @@ func (m *Manager) SetAgent(ctx context.Context, senderID, channel, agent string)
 
 func (m *Manager) ResponseCh() <-chan core.ResponseEvent {
 	return m.responseCh
+}
+
+func (m *Manager) Run(ctx context.Context) error {
+	return m.watcher.Run(ctx)
 }
 
 func (m *Manager) buildSessionInfo(ws *core.Workspace, sess *core.Session) *core.SessionInfo {
