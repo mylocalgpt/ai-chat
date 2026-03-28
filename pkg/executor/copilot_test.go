@@ -31,12 +31,9 @@ func TestCopilotAdapterStop(t *testing.T) {
 }
 
 func TestCopilotAdapterSpawnCopilotNotOnPath(t *testing.T) {
-	// Save original PATH.
 	origPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", origPath)
-
-	// Set PATH to empty so copilot is not found.
-	os.Setenv("PATH", "")
+	defer func() { _ = os.Setenv("PATH", origPath) }()
+	_ = os.Setenv("PATH", "")
 
 	a := NewCopilotAdapter(nil)
 	session := core.SessionInfo{
@@ -58,10 +55,9 @@ func TestCopilotAdapterSpawnCreatesResponseFile(t *testing.T) {
 		t.Fatalf("failed to create fake copilot: %v", err)
 	}
 
-	// Save original PATH.
 	origPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", origPath)
-	os.Setenv("PATH", tmpDir)
+	defer func() { _ = os.Setenv("PATH", origPath) }()
+	_ = os.Setenv("PATH", tmpDir)
 
 	a := NewCopilotAdapter(nil)
 	session := core.SessionInfo{
@@ -92,10 +88,9 @@ echo "This is the copilot response"
 		t.Fatalf("failed to create fake copilot: %v", err)
 	}
 
-	// Save original PATH.
 	origPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", origPath)
-	os.Setenv("PATH", tmpDir)
+	defer func() { _ = os.Setenv("PATH", origPath) }()
+	_ = os.Setenv("PATH", tmpDir)
 
 	a := NewCopilotAdapter(nil)
 	session := core.SessionInfo{

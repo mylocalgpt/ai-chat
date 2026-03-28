@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/audit"
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
@@ -16,6 +18,7 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
 	"github.com/mylocalgpt/ai-chat/pkg/router"
+	"github.com/mylocalgpt/ai-chat/pkg/session"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
@@ -70,17 +73,10 @@ func runStart(args []string) {
 
 	st := store.New(db)
 
-	// Initialize executor.
+	// Initialize executor components.
 	tmuxRunner := executor.NewTmux()
 	registry := executor.NewHarnessRegistry(tmuxRunner)
-	exec := executor.NewExecutor(st, tmuxRunner, registry, cfg.ResponsesDir)
-
-	// Clean up stale sessions from previous runs.
-	if res, err := exec.ReconcileSessions(context.Background()); err != nil {
-		slog.Warn("session reconciliation failed", "error", err)
-	} else if res.Crashed > 0 || res.Orphaned > 0 {
-		slog.Info("reconciled sessions", "crashed", res.Crashed, "orphaned", res.Orphaned)
-	}
+	securityProxy := executor.NewSecurityProxy()
 
 	// Create response directory.
 	if err := os.MkdirAll(cfg.ResponsesDir, 0o755); err != nil {
@@ -88,8 +84,31 @@ func runStart(args []string) {
 		os.Exit(1)
 	}
 
+	// Initialize session manager.
+	sessionCfg := session.ManagerConfig{
+		ResponsesDir:    cfg.ResponsesDir,
+		SoftIdleTimeout: 30 * time.Minute,
+		HardIdleTimeout: 2 * time.Hour,
+		ReaperInterval:  5 * time.Minute,
+	}
+	sessMgr := session.NewManager(st, registry, securityProxy, sessionCfg)
+
 	// Initialize slash command router.
-	cmdRouter := router.NewRouter(st, nil) // sessionMgr wired in Phase 5
+	cmdRouter := router.NewRouter(st, sessMgr)
+
+	// Signal handling for graceful shutdown.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	// Start session manager in background.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := sessMgr.Run(ctx); err != nil && err != ctx.Err() {
+			slog.Error("session manager error", "error", err)
+		}
+	}()
 
 	// Initialize Telegram adapter.
 	tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
@@ -152,9 +171,23 @@ func runStart(args []string) {
 	// Wire message handlers.
 	tg.SetMessageHandler(handleMessage(tg.Send))
 
-	// Signal handling for graceful shutdown.
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	// Consume response events from session manager and send to Telegram.
+	go func() {
+		for event := range sessMgr.ResponseCh() {
+			_ = tg.Send(ctx, core.OutboundMessage{
+				Channel:     event.Channel,
+				RecipientID: event.SenderID,
+				Content:     event.Content,
+			})
+			_ = st.CreateMessage(ctx, &core.Message{
+				Channel:   event.Channel,
+				SenderID:  event.SenderID,
+				Content:   event.Content,
+				Direction: core.OutboundDirection,
+				Status:    core.StatusDone,
+			})
+		}
+	}()
 
 	// Start Telegram long polling.
 	if err := tg.Start(ctx); err != nil {
@@ -169,6 +202,7 @@ func runStart(args []string) {
 
 	slog.Info("shutting down")
 	_ = tg.Stop()
+	wg.Wait()
 	_ = st.Close()
 	_ = audit.CloseGlobal()
 }
