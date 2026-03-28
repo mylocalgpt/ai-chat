@@ -11,7 +11,7 @@ import (
 
 func TestComplete_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ChatResponse{
+		_ = json.NewEncoder(w).Encode(ChatResponse{
 			Choices: []struct {
 				Message struct {
 					Content string `json:"content"`
@@ -43,7 +43,7 @@ func TestComplete_APIError(t *testing.T) {
 		resp.Error = &struct {
 			Message string `json:"message"`
 		}{Message: "rate limited"}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -65,7 +65,7 @@ func TestComplete_APIError(t *testing.T) {
 func TestComplete_NonOKStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte("too many requests"))
+		_, _ = w.Write([]byte("too many requests"))
 	}))
 	defer srv.Close()
 
@@ -83,7 +83,7 @@ func TestComplete_NonOKStatus(t *testing.T) {
 
 func TestComplete_EmptyChoices(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ChatResponse{})
+		_ = json.NewEncoder(w).Encode(ChatResponse{})
 	}))
 	defer srv.Close()
 
@@ -101,7 +101,7 @@ func TestComplete_EmptyChoices(t *testing.T) {
 
 func TestComplete_MalformedJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("{not valid json"))
+		_, _ = w.Write([]byte("{not valid json"))
 	}))
 	defer srv.Close()
 
@@ -147,7 +147,7 @@ func TestComplete_HeadersSet(t *testing.T) {
 		if got := r.Header.Get("Content-Type"); got != "application/json" {
 			t.Errorf("Content-Type header = %q, want %q", got, "application/json")
 		}
-		json.NewEncoder(w).Encode(ChatResponse{
+		_ = json.NewEncoder(w).Encode(ChatResponse{
 			Choices: []struct {
 				Message struct {
 					Content string `json:"content"`

@@ -32,7 +32,7 @@ func newModelTracker() *modelTracker {
 func (mt *modelTracker) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req ChatRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 
 		mt.mu.Lock()
 		mt.called = append(mt.called, req.Model)
@@ -40,19 +40,19 @@ func (mt *modelTracker) handler() http.HandlerFunc {
 
 		if mt.failFor[req.Model] {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("model error"))
+			_, _ = w.Write([]byte("model error"))
 			return
 		}
 
 		action, ok := mt.respond[req.Model]
 		if !ok {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("no response configured for model"))
+			_, _ = w.Write([]byte("no response configured for model"))
 			return
 		}
 
 		actionJSON, _ := json.Marshal(action)
-		json.NewEncoder(w).Encode(ChatResponse{
+		_ = json.NewEncoder(w).Encode(ChatResponse{
 			Choices: []struct {
 				Message struct {
 					Content string `json:"content"`
@@ -83,7 +83,7 @@ func newTestStore(t *testing.T) *store.Store {
 	if err := store.Migrate(db); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	return store.New(db)
 }
 

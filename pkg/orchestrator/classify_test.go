@@ -76,7 +76,7 @@ func TestBuildClassifyPrompt_NilWorkspace(t *testing.T) {
 func mockRouterResponse(t *testing.T, response string) *Router {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ChatResponse{
+		_ = json.NewEncoder(w).Encode(ChatResponse{
 			Choices: []struct {
 				Message struct {
 					Content string `json:"content"`
@@ -96,7 +96,7 @@ func mockRouterError(t *testing.T) *Router {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
+		_, _ = w.Write([]byte("internal error"))
 	}))
 	t.Cleanup(srv.Close)
 	return NewRouter("test-key").WithBaseURL(srv.URL)

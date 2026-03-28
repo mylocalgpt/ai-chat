@@ -17,7 +17,7 @@ func setupTestOrchestrator(t *testing.T) (*Orchestrator, *store.Store) {
 	t.Helper()
 	// Dummy server that returns a valid response (not used by HandleAction tests)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ChatResponse{
+		_ = json.NewEncoder(w).Encode(ChatResponse{
 			Choices: []struct {
 				Message struct {
 					Content string `json:"content"`
@@ -41,7 +41,7 @@ func TestHandleAction_WorkspaceSwitch_ExactName(t *testing.T) {
 	orch, st := setupTestOrchestrator(t)
 	ctx := context.Background()
 
-	st.CreateWorkspace(ctx, "laboratory", "/home/user/lab", "")
+	_, _ = st.CreateWorkspace(ctx, "laboratory", "/home/user/lab", "")
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionWorkspaceSwitch, Workspace: "laboratory"}
@@ -59,7 +59,7 @@ func TestHandleAction_WorkspaceSwitch_CaseInsensitive(t *testing.T) {
 	orch, st := setupTestOrchestrator(t)
 	ctx := context.Background()
 
-	st.CreateWorkspace(ctx, "Laboratory", "/home/user/lab", "")
+	_, _ = st.CreateWorkspace(ctx, "Laboratory", "/home/user/lab", "")
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionWorkspaceSwitch, Workspace: "laboratory"}
@@ -78,7 +78,7 @@ func TestHandleAction_WorkspaceSwitch_AliasMatch(t *testing.T) {
 	ctx := context.Background()
 
 	ws, _ := st.CreateWorkspace(ctx, "laboratory", "/home/user/lab", "")
-	st.UpdateWorkspaceMetadata(ctx, ws.ID, json.RawMessage(`{"aliases": ["lab"]}`))
+	_ = st.UpdateWorkspaceMetadata(ctx, ws.ID, json.RawMessage(`{"aliases": ["lab"]}`))
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionWorkspaceSwitch, Workspace: "lab"}
@@ -96,7 +96,7 @@ func TestHandleAction_WorkspaceSwitch_PrefixMatch(t *testing.T) {
 	orch, st := setupTestOrchestrator(t)
 	ctx := context.Background()
 
-	st.CreateWorkspace(ctx, "fitness-tracker", "/home/user/fitness", "")
+	_, _ = st.CreateWorkspace(ctx, "fitness-tracker", "/home/user/fitness", "")
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionWorkspaceSwitch, Workspace: "fitness"}
@@ -114,7 +114,7 @@ func TestHandleAction_WorkspaceSwitch_NotFound(t *testing.T) {
 	orch, st := setupTestOrchestrator(t)
 	ctx := context.Background()
 
-	st.CreateWorkspace(ctx, "myproject", "/home/user/project", "")
+	_, _ = st.CreateWorkspace(ctx, "myproject", "/home/user/project", "")
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionWorkspaceSwitch, Workspace: "nonexistent"}
@@ -135,8 +135,8 @@ func TestHandleAction_WorkspaceSwitch_Ambiguous(t *testing.T) {
 	orch, st := setupTestOrchestrator(t)
 	ctx := context.Background()
 
-	st.CreateWorkspace(ctx, "fitness-app", "/home/user/app", "")
-	st.CreateWorkspace(ctx, "fitness-tracker", "/home/user/tracker", "")
+	_, _ = st.CreateWorkspace(ctx, "fitness-app", "/home/user/app", "")
+	_, _ = st.CreateWorkspace(ctx, "fitness-tracker", "/home/user/tracker", "")
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionWorkspaceSwitch, Workspace: "fitness"}
@@ -145,8 +145,8 @@ func TestHandleAction_WorkspaceSwitch_Ambiguous(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(resp, "Ambiguous") {
-		t.Errorf("resp should contain 'Ambiguous', got: %s", resp)
+	if !strings.Contains(resp, "ambiguous") {
+		t.Errorf("resp should contain 'ambiguous', got: %s", resp)
 	}
 	if !strings.Contains(resp, "fitness-app") || !strings.Contains(resp, "fitness-tracker") {
 		t.Errorf("resp should list matching workspaces, got: %s", resp)
@@ -182,8 +182,8 @@ func TestHandleAction_Status_WithWorkspace(t *testing.T) {
 	ctx := context.Background()
 
 	ws, _ := st.CreateWorkspace(ctx, "myproject", "/home/user/project", "")
-	st.SetActiveWorkspace(ctx, "user1", "telegram", ws.ID)
-	st.CreateSession(ctx, ws.ID, "claude", "tmux-1")
+	_ = st.SetActiveWorkspace(ctx, "user1", "telegram", ws.ID)
+	_, _ = st.CreateSession(ctx, ws.ID, "claude", "tmux-1")
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionStatus}
@@ -204,7 +204,7 @@ func TestHandleAction_Status_NoWorkspace(t *testing.T) {
 	orch, st := setupTestOrchestrator(t)
 	ctx := context.Background()
 
-	st.CreateWorkspace(ctx, "available-ws", "/home/user/ws", "")
+	_, _ = st.CreateWorkspace(ctx, "available-ws", "/home/user/ws", "")
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionStatus}
@@ -257,8 +257,8 @@ func TestHandleAction_MetaCommand_ListWorkspaces(t *testing.T) {
 	orch, st := setupTestOrchestrator(t)
 	ctx := context.Background()
 
-	st.CreateWorkspace(ctx, "project-a", "/home/user/a", "")
-	st.CreateWorkspace(ctx, "project-b", "/home/user/b", "")
+	_, _ = st.CreateWorkspace(ctx, "project-a", "/home/user/a", "")
+	_, _ = st.CreateWorkspace(ctx, "project-b", "/home/user/b", "")
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionMetaCommand, Content: "list workspaces", Reasoning: "user wants workspace list"}
@@ -290,7 +290,7 @@ func TestHandleAction_Status_NoSession(t *testing.T) {
 	ctx := context.Background()
 
 	ws, _ := st.CreateWorkspace(ctx, "myproject", "/home/user/project", "")
-	st.SetActiveWorkspace(ctx, "user1", "telegram", ws.ID)
+	_ = st.SetActiveWorkspace(ctx, "user1", "telegram", ws.ID)
 
 	msg := core.InboundMessage{SenderID: "user1", Channel: "telegram"}
 	action := Action{Type: ActionStatus}

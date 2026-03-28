@@ -46,7 +46,7 @@ func (s *Store) GetPendingMessages(ctx context.Context, channel string) ([]core.
 	if err != nil {
 		return nil, fmt.Errorf("getting pending messages: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	messages := []core.Message{}
 	for rows.Next() {
@@ -69,7 +69,7 @@ func (s *Store) ListMessages(ctx context.Context, workspaceID int64, limit int) 
 	if err != nil {
 		return nil, fmt.Errorf("listing messages for workspace %d: %w", workspaceID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	messages := []core.Message{}
 	for rows.Next() {
@@ -101,7 +101,7 @@ func (s *Store) ListMessagesSince(ctx context.Context, workspaceID int64, since 
 	if err != nil {
 		return nil, fmt.Errorf("listing messages since %s for workspace %d: %w", sinceStr, workspaceID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	messages := []core.Message{}
 	for rows.Next() {

@@ -11,6 +11,6 @@ func newTestStore(t *testing.T) *Store {
 	if err := Migrate(db); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	return New(db)
 }

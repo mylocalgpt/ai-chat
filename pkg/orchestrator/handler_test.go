@@ -37,7 +37,7 @@ func setupE2E(t *testing.T, handler http.HandlerFunc) (*Orchestrator, *store.Sto
 	if err := store.Migrate(db); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	st := store.New(db)
 	router := NewRouter("test-key").WithBaseURL(srv.URL)
@@ -47,7 +47,7 @@ func setupE2E(t *testing.T, handler http.HandlerFunc) (*Orchestrator, *store.Sto
 
 func respondWithAction(w http.ResponseWriter, action Action) {
 	actionJSON, _ := json.Marshal(action)
-	json.NewEncoder(w).Encode(ChatResponse{
+	_ = json.NewEncoder(w).Encode(ChatResponse{
 		Choices: []struct {
 			Message struct {
 				Content string `json:"content"`
@@ -76,8 +76,8 @@ func TestE2E_WorkspaceSwitch(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	st.CreateWorkspace(ctx, "laboratory", "/home/user/lab", "")
-	st.CreateWorkspace(ctx, "fitness-tracker", "/home/user/fitness", "")
+	_, _ = st.CreateWorkspace(ctx, "laboratory", "/home/user/lab", "")
+	_, _ = st.CreateWorkspace(ctx, "fitness-tracker", "/home/user/fitness", "")
 
 	result, err := orch.HandleMessage(ctx, core.InboundMessage{
 		SenderID: "user1",
@@ -115,7 +115,7 @@ func TestE2E_StatusQuery(t *testing.T) {
 
 	ctx := context.Background()
 	ws, _ := st.CreateWorkspace(ctx, "laboratory", "/home/user/lab", "")
-	st.SetActiveWorkspace(ctx, "user1", "telegram", ws.ID)
+	_ = st.SetActiveWorkspace(ctx, "user1", "telegram", ws.ID)
 
 	result, err := orch.HandleMessage(ctx, core.InboundMessage{
 		SenderID: "user1",
@@ -215,7 +215,7 @@ func TestSetup_SeedsDefaults(t *testing.T) {
 	if err := store.Migrate(db); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	st := store.New(db)
 

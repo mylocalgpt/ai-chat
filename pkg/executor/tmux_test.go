@@ -121,7 +121,7 @@ func TestTmuxIntegration(t *testing.T) {
 	if err := tmx.NewSession(session, "/tmp"); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	defer tmx.KillSession(session)
+	defer func() { _ = tmx.KillSession(session) }()
 
 	if !tmx.HasSession(session) {
 		t.Fatal("HasSession returned false after NewSession")

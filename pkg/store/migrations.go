@@ -35,7 +35,7 @@ func Migrate(db *sql.DB) error {
 		}
 
 		if err := migrations[i](tx); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("migration %d failed: %w", i+1, err)
 		}
 
@@ -44,7 +44,7 @@ func Migrate(db *sql.DB) error {
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 			strconv.Itoa(i+1),
 		); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("updating schema version to %d: %w", i+1, err)
 		}
 

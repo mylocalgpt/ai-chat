@@ -26,7 +26,7 @@ import (
 func runStart(args []string) {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to config file (default: ~/.ai-chat/config.json, then ./config.json)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	// Set up structured JSON logging to stderr.
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -59,7 +59,7 @@ func runStart(args []string) {
 		slog.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := store.Migrate(db); err != nil {
 		slog.Error("failed to run migrations", "error", err)
@@ -104,18 +104,20 @@ func runStart(args []string) {
 			log := slog.With("channel", msg.Channel, "sender", msg.SenderID)
 
 			// Persist inbound message.
-			st.CreateMessage(ctx, &core.Message{
+			if err := st.CreateMessage(ctx, &core.Message{
 				Channel:   msg.Channel,
 				SenderID:  msg.SenderID,
 				Content:   msg.Content,
 				Direction: core.InboundDirection,
 				Status:    core.StatusDone,
-			})
+			}); err != nil {
+				log.Warn("failed to persist inbound message", "error", err)
+			}
 
 			result, err := orch.HandleMessage(ctx, msg)
 			if err != nil {
 				log.Error("orchestrator failed", "error", err)
-				send(ctx, core.OutboundMessage{
+				_ = send(ctx, core.OutboundMessage{
 					Channel:     msg.Channel,
 					RecipientID: msg.SenderID,
 					Content:     "Something went wrong processing your message.",
@@ -129,7 +131,7 @@ func runStart(args []string) {
 				ws, err := resolveWorkspace(ctx, st, result.Action.Workspace, msg.SenderID, msg.Channel)
 				if err != nil {
 					log.Error("no workspace available", "error", err)
-					send(ctx, core.OutboundMessage{
+					_ = send(ctx, core.OutboundMessage{
 						Channel:     msg.Channel,
 						RecipientID: msg.SenderID,
 						Content:     "No workspace found. Create one first or specify a workspace name.",
@@ -144,7 +146,7 @@ func runStart(args []string) {
 				resp, err := exec.Execute(ctx, *ws, agent, msg.Content)
 				if err != nil {
 					log.Error("executor failed", "error", err)
-					send(ctx, core.OutboundMessage{
+					_ = send(ctx, core.OutboundMessage{
 						Channel:     msg.Channel,
 						RecipientID: msg.SenderID,
 						Content:     "Something went wrong with the agent. Please try again.",
@@ -156,15 +158,17 @@ func runStart(args []string) {
 
 			if response != "" {
 				// Persist outbound message.
-				st.CreateMessage(ctx, &core.Message{
+				if err := st.CreateMessage(ctx, &core.Message{
 					Channel:     msg.Channel,
 					SenderID:    msg.SenderID,
 					WorkspaceID: wsID,
 					Content:     response,
 					Direction:   core.OutboundDirection,
 					Status:      core.StatusDone,
-				})
-				send(ctx, core.OutboundMessage{
+				}); err != nil {
+					log.Warn("failed to persist outbound message", "error", err)
+				}
+				_ = send(ctx, core.OutboundMessage{
 					Channel:     msg.Channel,
 					RecipientID: msg.SenderID,
 					Content:     response,
@@ -191,7 +195,7 @@ func runStart(args []string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	// Start web channel (registers /ws on mux).
@@ -229,13 +233,13 @@ func runStart(args []string) {
 	<-ctx.Done()
 
 	slog.Info("shutting down")
-	tg.Stop()
-	webCh.Stop()
+	_ = tg.Stop()
+	_ = webCh.Stop()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	srv.Shutdown(shutdownCtx)
-	st.Close()
-	audit.CloseGlobal()
+	_ = srv.Shutdown(shutdownCtx)
+	_ = st.Close()
+	_ = audit.CloseGlobal()
 }
 
 // resolveWorkspace looks up a workspace by name. If name is empty, it falls

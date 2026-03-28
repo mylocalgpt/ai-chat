@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Running pre-push checks..."
+
+echo "=> golangci-lint"
+golangci-lint run ./...
+
+echo "=> go vet"
+go vet ./...
+
+echo "=> go test"
+go test ./...
+
+echo "=> frontend build"
+cd web && npm run build && cd ..
+
+echo "=> go build"
+go build -o /dev/null ./cmd/ai-chat
+
+echo "All pre-push checks passed."

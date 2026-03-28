@@ -169,7 +169,7 @@ func countLines(path string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	count := 0
 	scanner := bufio.NewScanner(f)
@@ -262,7 +262,7 @@ func matchWithGo(pattern string, files []string, threshold int) (int, []string, 
 			}
 		}
 
-		f.Close()
+		_ = f.Close()
 		if err := scanner.Err(); err != nil {
 			return total, details, err
 		}

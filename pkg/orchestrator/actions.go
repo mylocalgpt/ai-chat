@@ -104,7 +104,7 @@ func (o *Orchestrator) listWorkspacesResponse(ctx context.Context) (string, erro
 	var b strings.Builder
 	b.WriteString("Workspaces:\n")
 	for _, w := range workspaces {
-		b.WriteString(fmt.Sprintf("- %s (%s)\n", w.Name, w.Path))
+		fmt.Fprintf(&b, "- %s (%s)\n", w.Name, w.Path)
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }
@@ -146,7 +146,7 @@ func matchWorkspace(ctx context.Context, name string, st *store.Store) (*core.Wo
 		for i, m := range matches {
 			names[i] = m.Name
 		}
-		return nil, fmt.Errorf("Ambiguous workspace %q. Did you mean: %s?", name, strings.Join(names, ", "))
+		return nil, fmt.Errorf("ambiguous workspace %q, did you mean: %s", name, strings.Join(names, ", "))
 	}
 
 	// No match.
@@ -155,7 +155,7 @@ func matchWorkspace(ctx context.Context, name string, st *store.Store) (*core.Wo
 		names[i] = w.Name
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("Workspace %q not found. No workspaces available.", name)
+		return nil, fmt.Errorf("workspace %q not found, no workspaces available", name)
 	}
-	return nil, fmt.Errorf("Workspace %q not found. Available: %s", name, strings.Join(names, ", "))
+	return nil, fmt.Errorf("workspace %q not found, available: %s", name, strings.Join(names, ", "))
 }

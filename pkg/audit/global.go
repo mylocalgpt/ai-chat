@@ -40,7 +40,7 @@ func CloseGlobal() error {
 // resetGlobal resets the global state for testing. Not exported.
 func resetGlobal() {
 	if defaultLogger != nil {
-		defaultLogger.Close()
+		_ = defaultLogger.Close()
 		defaultLogger = nil
 	}
 	initOnce = sync.Once{}

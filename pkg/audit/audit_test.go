@@ -15,7 +15,7 @@ func TestLogCreatesFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuditLogger: %v", err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	entry := AuditEntry{
 		Timestamp: time.Now().UTC(),
@@ -42,7 +42,7 @@ func TestLogRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuditLogger: %v", err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	ts := time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC)
 	entry := AuditEntry{
@@ -93,7 +93,7 @@ func TestOmitemptyFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuditLogger: %v", err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	entry := AuditEntry{
 		Timestamp: time.Now().UTC(),
@@ -137,7 +137,7 @@ func TestDateRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuditLogger: %v", err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	day1 := time.Date(2026, 3, 28, 23, 59, 0, 0, time.UTC)
 	day2 := time.Date(2026, 3, 29, 0, 1, 0, 0, time.UTC)
@@ -196,7 +196,7 @@ func TestOutputFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuditLogger: %v", err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	ts := time.Date(2026, 3, 28, 14, 30, 0, 0, time.UTC)
 	entry := AuditEntry{

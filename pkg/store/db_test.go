@@ -10,7 +10,7 @@ func TestOpenInMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(:memory:) failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 }
 
 func TestMigrateCreatesTables(t *testing.T) {
@@ -18,7 +18,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate failed: %v", err)
@@ -41,7 +41,7 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := Migrate(db); err != nil {
 		t.Fatalf("first Migrate failed: %v", err)
@@ -68,7 +68,7 @@ func TestWALMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%q) failed: %v", dbPath, err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var mode string
 	if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
@@ -84,7 +84,7 @@ func TestForeignKeysEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var fk int
 	if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&fk); err != nil {
@@ -100,7 +100,7 @@ func TestIndexesCreated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate failed: %v", err)

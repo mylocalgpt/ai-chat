@@ -75,7 +75,7 @@ func TestHealthCheckDBDown(t *testing.T) {
 
 	tc := res.Content[0].(*gomcp.TextContent)
 	var output HealthCheckOutput
-	json.Unmarshal([]byte(tc.Text), &output)
+	_ = json.Unmarshal([]byte(tc.Text), &output)
 
 	if output.Status != "unhealthy" {
 		t.Errorf("expected unhealthy, got %q", output.Status)
@@ -98,7 +98,7 @@ func TestHealthCheckNoChannel(t *testing.T) {
 
 	tc := res.Content[0].(*gomcp.TextContent)
 	var output HealthCheckOutput
-	json.Unmarshal([]byte(tc.Text), &output)
+	_ = json.Unmarshal([]byte(tc.Text), &output)
 
 	if output.Status != "degraded" {
 		t.Errorf("expected degraded, got %q", output.Status)
@@ -117,7 +117,7 @@ func TestHealthCheckChannelDisconnected(t *testing.T) {
 
 	tc := res.Content[0].(*gomcp.TextContent)
 	var output HealthCheckOutput
-	json.Unmarshal([]byte(tc.Text), &output)
+	_ = json.Unmarshal([]byte(tc.Text), &output)
 
 	if output.Status != "degraded" {
 		t.Errorf("expected degraded, got %q", output.Status)

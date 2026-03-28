@@ -66,7 +66,7 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]core.Workspace, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing workspaces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	workspaces := []core.Workspace{}
 	for rows.Next() {

@@ -92,7 +92,7 @@ func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *
 	// Default echo behavior for development; replaced when the orchestrator
 	// registers its own handler via SetMessageHandler.
 	slog.Info("echo", "chat_id", msg.SenderID, "text_len", len(msg.Content))
-	t.Send(ctx, core.OutboundMessage{
+	_ = t.Send(ctx, core.OutboundMessage{
 		Channel:     "telegram",
 		RecipientID: msg.SenderID,
 		Content:     msg.Content,

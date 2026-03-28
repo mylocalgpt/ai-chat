@@ -125,7 +125,7 @@ func AllUsageSummaries(logDir string, days int) ([]*Usage, error) {
 			}
 		}
 
-		f.Close()
+		_ = f.Close()
 		if err := scanner.Err(); err != nil {
 			return nil, fmt.Errorf("audit: scan %s: %w", path, err)
 		}
@@ -207,7 +207,7 @@ func scanUsageFile(path string, workspace string, u *Usage, agentDuration map[st
 	if err != nil {
 		return fmt.Errorf("audit: open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

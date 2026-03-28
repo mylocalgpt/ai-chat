@@ -66,7 +66,7 @@ func (r *Router) Complete(ctx context.Context, model string, messages []Message)
 	if err != nil {
 		return "", fmt.Errorf("router: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, responseMaxSize))
 	if err != nil {

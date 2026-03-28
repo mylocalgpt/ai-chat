@@ -75,18 +75,6 @@ func accumulate(segments []string, maxLen int, sep string, remainingSeps []strin
 	var current strings.Builder
 
 	joiner := sep
-	// Use a simplified joiner for display.
-	if sep == "\n\n" {
-		joiner = "\n\n"
-	} else if sep == ".\n" {
-		joiner = ".\n"
-	} else if sep == ". " {
-		joiner = ". "
-	} else if sep == "? " {
-		joiner = "? "
-	} else if sep == "! " {
-		joiner = "! "
-	}
 
 	for _, seg := range segments {
 		segLen := utf8.RuneCountInString(seg)

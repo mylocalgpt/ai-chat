@@ -135,7 +135,7 @@ func (a *AuditLogger) Close() error {
 // rotate closes the current file and opens a new one for today's date.
 func (a *AuditLogger) rotate() error {
 	if a.current != nil {
-		a.current.Close()
+		_ = a.current.Close()
 	}
 	return a.openToday()
 }

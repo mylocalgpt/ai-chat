@@ -366,7 +366,7 @@ func TestWorkspaceUpdateClearAliases(t *testing.T) {
 
 	ws := ms.workspaces["test"]
 	var m map[string]any
-	json.Unmarshal(ws.Metadata, &m)
+	_ = json.Unmarshal(ws.Metadata, &m)
 	if _, ok := m["aliases"]; ok {
 		t.Error("aliases should have been cleared")
 	}
@@ -403,7 +403,7 @@ func TestWorkspaceRegisterWithMetadata(t *testing.T) {
 
 	ws := ms.workspaces["proj"]
 	var m map[string]any
-	json.Unmarshal(ws.Metadata, &m)
+	_ = json.Unmarshal(ws.Metadata, &m)
 	if m["description"] != "my project" {
 		t.Errorf("expected description 'my project', got %v", m["description"])
 	}

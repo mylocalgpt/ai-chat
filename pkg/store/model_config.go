@@ -54,7 +54,7 @@ func (s *Store) ListModelConfigs(ctx context.Context) ([]ModelConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing model configs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	configs := []ModelConfig{}
 	for rows.Next() {

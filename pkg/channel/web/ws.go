@@ -77,7 +77,7 @@ func (wc *WebChannel) handleWS(w http.ResponseWriter, r *http.Request) {
 	wc.connMgr.Add(webSenderID, conn)
 	defer func() {
 		wc.connMgr.Remove(webSenderID)
-		conn.CloseNow()
+		_ = conn.CloseNow()
 	}()
 
 	ctx := r.Context()

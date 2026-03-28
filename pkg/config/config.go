@@ -152,7 +152,7 @@ func (c *Config) String() string {
 	}
 	b.WriteByte('\n')
 
-	b.WriteString(fmt.Sprintf("telegram.allowed_users: %d user(s)\n", len(c.Telegram.AllowedUsers)))
+	fmt.Fprintf(&b, "telegram.allowed_users: %d user(s)\n", len(c.Telegram.AllowedUsers))
 
 	b.WriteString("openrouter.api_key: ")
 	if c.OpenRouter.APIKey != "" {
@@ -162,9 +162,9 @@ func (c *Config) String() string {
 	}
 	b.WriteByte('\n')
 
-	b.WriteString(fmt.Sprintf("db_path: %s\n", c.DBPath))
-	b.WriteString(fmt.Sprintf("log_dir: %s\n", c.LogDir))
-	b.WriteString(fmt.Sprintf("http_addr: %s", c.HTTPAddr))
+	fmt.Fprintf(&b, "db_path: %s\n", c.DBPath)
+	fmt.Fprintf(&b, "log_dir: %s\n", c.LogDir)
+	fmt.Fprintf(&b, "http_addr: %s", c.HTTPAddr)
 
 	return b.String()
 }

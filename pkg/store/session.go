@@ -77,7 +77,7 @@ func (s *Store) ListSessions(ctx context.Context) ([]core.Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	sessions := []core.Session{}
 	for rows.Next() {

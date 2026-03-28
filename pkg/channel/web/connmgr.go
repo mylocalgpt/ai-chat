@@ -29,7 +29,7 @@ func (cm *ConnManager) Add(senderID string, conn *websocket.Conn) {
 	defer cm.mu.Unlock()
 
 	if old, ok := cm.conns[senderID]; ok {
-		old.Close(websocket.StatusGoingAway, "replaced by new connection")
+		_ = old.Close(websocket.StatusGoingAway, "replaced by new connection")
 	}
 	cm.conns[senderID] = conn
 }
@@ -83,7 +83,7 @@ func (cm *ConnManager) CloseAll() {
 	defer cm.mu.Unlock()
 
 	for id, conn := range cm.conns {
-		conn.Close(websocket.StatusGoingAway, "server shutting down")
+		_ = conn.Close(websocket.StatusGoingAway, "server shutting down")
 		delete(cm.conns, id)
 	}
 }

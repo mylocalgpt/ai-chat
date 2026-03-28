@@ -29,7 +29,7 @@ func runAuditCheck(args []string) {
 	fs := flag.NewFlagSet("audit check", flag.ExitOnError)
 	days := fs.Int("days", 1, "number of days to check")
 	logDir := fs.String("log-dir", "", "log directory (default ~/.ai-chat/logs/)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	dir := *logDir
 	if dir == "" {
@@ -55,7 +55,7 @@ func runAuditUsage(args []string) {
 	workspace := fs.String("workspace", "", "filter by workspace name (default: all)")
 	days := fs.Int("days", 7, "number of days to aggregate")
 	logDir := fs.String("log-dir", "", "log directory (default ~/.ai-chat/logs/)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	dir := *logDir
 	if dir == "" {

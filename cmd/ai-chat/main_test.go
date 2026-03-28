@@ -23,7 +23,7 @@ func TestStartIntegration(t *testing.T) {
 		t.Fatalf("finding free port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	_ = ln.Close()
 
 	// Write a valid config file.
 	cfgJSON := `{
@@ -54,7 +54,7 @@ func TestStartIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := store.Migrate(db); err != nil {
 		t.Fatalf("store.Migrate: %v", err)
@@ -64,14 +64,12 @@ func TestStartIntegration(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
 
-	go func() {
-		srv.ListenAndServe()
-	}()
-	defer srv.Close()
+	go func() { _ = srv.ListenAndServe() }()
+	defer func() { _ = srv.Close() }()
 
 	// Wait briefly for the server to start.
 	time.Sleep(50 * time.Millisecond)
@@ -81,7 +79,7 @@ func TestStartIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /health: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		t.Errorf("status = %d, want 200", resp.StatusCode)

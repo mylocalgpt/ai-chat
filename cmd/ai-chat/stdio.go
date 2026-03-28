@@ -44,7 +44,7 @@ func runStdio() {
 	}
 
 	st := store.New(db)
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	mcpCfg := &mcppkg.ServerConfig{
 		AllowedUsers: cfg.Telegram.AllowedUsers,
