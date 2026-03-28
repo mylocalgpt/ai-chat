@@ -29,27 +29,23 @@ type OpenRouterConfig struct {
 	APIKey string `json:"api_key"`
 }
 
-// Load reads and parses a JSON config file. If path is empty, it defaults
-// to ~/.ai-chat/config.json. Tilde is expanded in the path and in path
-// fields within the config.
+// Load reads and parses a JSON config file. If path is empty, it checks
+// ~/.ai-chat/config.json first, then config.json in the current directory.
+// Tilde is expanded in the path and in path fields within the config.
 func Load(path string) (*Config, error) {
-	if path == "" {
-		path = "~/.ai-chat/config.json"
+	resolved, err := resolveConfigPath(path)
+	if err != nil {
+		return nil, err
 	}
 
-	expanded, err := expandHome(path)
+	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return nil, fmt.Errorf("expanding config path: %w", err)
-	}
-
-	data, err := os.ReadFile(expanded)
-	if err != nil {
-		return nil, fmt.Errorf("reading config file %s: %w", expanded, err)
+		return nil, fmt.Errorf("reading config file %s: %w", resolved, err)
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing config file %s: %w", expanded, err)
+		return nil, fmt.Errorf("parsing config file %s: %w", resolved, err)
 	}
 
 	// Apply defaults for empty fields.
@@ -86,23 +82,19 @@ func Load(path string) (*Config, error) {
 // LoadForMCP loads config without requiring Telegram credentials.
 // Used by the MCP stdio entrypoint where Telegram is optional.
 func LoadForMCP(path string) (*Config, error) {
-	if path == "" {
-		path = "~/.ai-chat/config.json"
+	resolved, err := resolveConfigPath(path)
+	if err != nil {
+		return nil, err
 	}
 
-	expanded, err := expandHome(path)
+	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return nil, fmt.Errorf("expanding config path: %w", err)
-	}
-
-	data, err := os.ReadFile(expanded)
-	if err != nil {
-		return nil, fmt.Errorf("reading config file %s: %w", expanded, err)
+		return nil, fmt.Errorf("reading config file %s: %w", resolved, err)
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing config file %s: %w", expanded, err)
+		return nil, fmt.Errorf("parsing config file %s: %w", resolved, err)
 	}
 
 	// Apply defaults for empty fields.
@@ -172,6 +164,29 @@ func (c *Config) String() string {
 	b.WriteString(fmt.Sprintf("http_addr: %s", c.HTTPAddr))
 
 	return b.String()
+}
+
+// resolveConfigPath returns the config file path to use. If an explicit path
+// is given, it expands tilde and returns it. Otherwise it checks
+// ~/.ai-chat/config.json first, then config.json in the current directory.
+func resolveConfigPath(path string) (string, error) {
+	if path != "" {
+		return expandHome(path)
+	}
+
+	home, err := expandHome("~/.ai-chat/config.json")
+	if err != nil {
+		return "", fmt.Errorf("expanding config path: %w", err)
+	}
+	if _, err := os.Stat(home); err == nil {
+		return home, nil
+	}
+
+	if _, err := os.Stat("config.json"); err == nil {
+		return "config.json", nil
+	}
+
+	return home, nil
 }
 
 // expandHome replaces a leading ~ in path with the user's home directory.

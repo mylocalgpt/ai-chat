@@ -14,7 +14,7 @@ It keeps everything on your hardware: SQLite for state, JSONL for audit logs, an
    ./scripts/build.sh
    ```
 
-2. Create a config file (`config.json`):
+2. Create a config file at `~/.ai-chat/config.json` or `config.json` in the project root:
    ```json
    {
      "telegram": {
@@ -23,21 +23,20 @@ It keeps everything on your hardware: SQLite for state, JSONL for audit logs, an
      },
      "openrouter": {
        "api_key": "your-openrouter-api-key"
-     },
-     "db_path": "~/.ai-chat/state.db",
-     "log_dir": "~/.ai-chat/logs/",
-     "http_addr": "127.0.0.1:8080"
+     }
    }
    ```
 
    Get the bot token from [@BotFather](https://t.me/BotFather), your user ID from [@userinfobot](https://t.me/userinfobot), and an API key from [OpenRouter](https://openrouter.ai/keys).
 
+   Optional fields: `db_path` (default `~/.ai-chat/state.db`), `log_dir` (default `~/.ai-chat/logs/`), `http_addr` (default `127.0.0.1:8080`).
+
 3. Run:
    ```bash
-   ./ai-chat start -config config.json
+   ./ai-chat start
    ```
 
-   The web UI is at `http://127.0.0.1:8080`. Your Telegram bot is live.
+   Config is found automatically. The web UI is at `http://127.0.0.1:8080`. Your Telegram bot is live.
 
 ## How It Works
 
