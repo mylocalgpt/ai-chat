@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
+	mcppkg "github.com/mylocalgpt/ai-chat/pkg/mcp"
 	"github.com/mylocalgpt/ai-chat/pkg/orchestrator"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
@@ -68,14 +69,6 @@ func runStart(args []string) {
 
 	st := store.New(db)
 
-	// Initialize orchestrator.
-	router := orchestrator.NewRouter(cfg.OpenRouter.APIKey)
-	orch, err := orchestrator.Setup(router, st)
-	if err != nil {
-		slog.Error("failed to set up orchestrator", "error", err)
-		os.Exit(1)
-	}
-
 	// Initialize executor.
 	tmuxRunner := executor.NewTmux()
 	registry := executor.NewHarnessRegistry(tmuxRunner)
@@ -86,6 +79,26 @@ func runStart(args []string) {
 		slog.Warn("session reconciliation failed", "error", err)
 	} else if res.Crashed > 0 || res.Orphaned > 0 {
 		slog.Info("reconciled sessions", "crashed", res.Crashed, "orphaned", res.Orphaned)
+	}
+
+	// Create MCP server with executor.
+	mcpCfg := &mcppkg.ServerConfig{AllowedUsers: cfg.Telegram.AllowedUsers}
+	mcpSrv := mcppkg.NewServer(st, mcpCfg, mcppkg.WithExecutor(exec))
+
+	// Connect in-process MCP session.
+	mcpSession, err := mcpSrv.ConnectInProcess(context.Background())
+	if err != nil {
+		slog.Error("failed to connect in-process MCP", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = mcpSession.Close() }()
+
+	// Initialize orchestrator.
+	router := orchestrator.NewRouter(cfg.OpenRouter.APIKey)
+	orch := orchestrator.NewOrchestrator(router, mcpSession, "google/gemini-3.1-flash-lite-preview")
+	if err := orch.Init(context.Background()); err != nil {
+		slog.Error("failed to init orchestrator", "error", err)
+		os.Exit(1)
 	}
 
 	// Initialize Telegram adapter.
@@ -114,7 +127,10 @@ func runStart(args []string) {
 				log.Warn("failed to persist inbound message", "error", err)
 			}
 
-			result, err := orch.HandleMessage(ctx, msg)
+			// Build user context string.
+			userContext := buildUserContext(ctx, st, msg.SenderID, msg.Channel)
+
+			response, err := orch.HandleMessage(ctx, msg, userContext)
 			if err != nil {
 				log.Error("orchestrator failed", "error", err)
 				_ = send(ctx, core.OutboundMessage{
@@ -125,46 +141,14 @@ func runStart(args []string) {
 				return
 			}
 
-			var wsID *int64
-			response := result.Response
-			if result.Action.Type == orchestrator.ActionAgentTask {
-				ws, err := resolveWorkspace(ctx, st, result.Action.Workspace, msg.SenderID, msg.Channel)
-				if err != nil {
-					log.Error("no workspace available", "error", err)
-					_ = send(ctx, core.OutboundMessage{
-						Channel:     msg.Channel,
-						RecipientID: msg.SenderID,
-						Content:     "No workspace found. Create one first or specify a workspace name.",
-					})
-					return
-				}
-				wsID = &ws.ID
-				agent := result.Action.Agent
-				if agent == "" {
-					agent = "claude"
-				}
-				resp, err := exec.Execute(ctx, *ws, agent, msg.Content)
-				if err != nil {
-					log.Error("executor failed", "error", err)
-					_ = send(ctx, core.OutboundMessage{
-						Channel:     msg.Channel,
-						RecipientID: msg.SenderID,
-						Content:     "Something went wrong with the agent. Please try again.",
-					})
-					return
-				}
-				response = resp
-			}
-
 			if response != "" {
 				// Persist outbound message.
 				if err := st.CreateMessage(ctx, &core.Message{
-					Channel:     msg.Channel,
-					SenderID:    msg.SenderID,
-					WorkspaceID: wsID,
-					Content:     response,
-					Direction:   core.OutboundDirection,
-					Status:      core.StatusDone,
+					Channel:   msg.Channel,
+					SenderID:  msg.SenderID,
+					Content:   response,
+					Direction: core.OutboundDirection,
+					Status:    core.StatusDone,
 				}); err != nil {
 					log.Warn("failed to persist outbound message", "error", err)
 				}
@@ -242,15 +226,41 @@ func runStart(args []string) {
 	_ = audit.CloseGlobal()
 }
 
-// resolveWorkspace looks up a workspace by name. If name is empty, it falls
-// back to the user's active workspace from their stored context.
-func resolveWorkspace(ctx context.Context, st *store.Store, name, senderID, channel string) (*core.Workspace, error) {
-	if name != "" {
-		return st.GetWorkspace(ctx, name)
-	}
+// buildUserContext queries the store for the user's active workspace and
+// available workspaces, then formats them as a string for the LLM system prompt.
+func buildUserContext(ctx context.Context, st *store.Store, senderID, channel string) string {
+	var b strings.Builder
+
+	b.WriteString("Current workspace: ")
 	uc, err := st.GetUserContext(ctx, senderID, channel)
-	if err != nil {
-		return nil, fmt.Errorf("no workspace specified and no active workspace set")
+	if err == nil && uc.ActiveWorkspaceID > 0 {
+		ws, err := st.GetWorkspaceByID(ctx, uc.ActiveWorkspaceID)
+		if err == nil {
+			b.WriteString(ws.Name)
+			b.WriteString(" (")
+			b.WriteString(ws.Path)
+			b.WriteString(")")
+		} else {
+			b.WriteString("none")
+		}
+	} else {
+		b.WriteString("none")
 	}
-	return st.GetWorkspaceByID(ctx, uc.ActiveWorkspaceID)
+
+	b.WriteString("\nAvailable workspaces: ")
+	workspaces, err := st.ListWorkspaces(ctx)
+	if err == nil && len(workspaces) > 0 {
+		for i, w := range workspaces {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(w.Name)
+			b.WriteString(": ")
+			b.WriteString(w.Path)
+		}
+	} else {
+		b.WriteString("none")
+	}
+
+	return b.String()
 }

@@ -3,13 +3,13 @@ module github.com/mylocalgpt/ai-chat
 go 1.25.0
 
 require (
+	github.com/coder/websocket v1.8.14
 	github.com/go-telegram/bot v1.20.0
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	modernc.org/sqlite v1.47.0
 )
 
 require (
-	github.com/coder/websocket v1.8.14 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
