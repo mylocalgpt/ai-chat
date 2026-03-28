@@ -3,7 +3,7 @@ package executor
 import "testing"
 
 func TestOpenCodeDetectStatus(t *testing.T) {
-	a := NewOpenCodeAdapter(NewTmux())
+	a := NewOpenCodeAdapter(NewTmux(), nil)
 
 	tests := []struct {
 		name      string

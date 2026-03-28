@@ -10,21 +10,21 @@ import (
 )
 
 func TestCopilotAdapterName(t *testing.T) {
-	a := NewCopilotAdapter()
+	a := NewCopilotAdapter(nil)
 	if a.Name() != "copilot" {
 		t.Errorf("Name() = %q, want %q", a.Name(), "copilot")
 	}
 }
 
 func TestCopilotAdapterIsAlive(t *testing.T) {
-	a := NewCopilotAdapter()
+	a := NewCopilotAdapter(nil)
 	if !a.IsAlive(core.SessionInfo{}) {
 		t.Error("IsAlive() should always return true for stateless adapter")
 	}
 }
 
 func TestCopilotAdapterStop(t *testing.T) {
-	a := NewCopilotAdapter()
+	a := NewCopilotAdapter(nil)
 	if err := a.Stop(context.Background(), core.SessionInfo{}); err != nil {
 		t.Errorf("Stop() should be no-op, got error: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestCopilotAdapterSpawnCopilotNotOnPath(t *testing.T) {
 	// Set PATH to empty so copilot is not found.
 	os.Setenv("PATH", "")
 
-	a := NewCopilotAdapter()
+	a := NewCopilotAdapter(nil)
 	session := core.SessionInfo{
 		Name:          "test-session",
 		WorkspacePath: "/tmp",
@@ -63,7 +63,7 @@ func TestCopilotAdapterSpawnCreatesResponseFile(t *testing.T) {
 	defer os.Setenv("PATH", origPath)
 	os.Setenv("PATH", tmpDir)
 
-	a := NewCopilotAdapter()
+	a := NewCopilotAdapter(nil)
 	session := core.SessionInfo{
 		Name:          "test-session",
 		WorkspacePath: "/tmp",
@@ -97,7 +97,7 @@ echo "This is the copilot response"
 	defer os.Setenv("PATH", origPath)
 	os.Setenv("PATH", tmpDir)
 
-	a := NewCopilotAdapter()
+	a := NewCopilotAdapter(nil)
 	session := core.SessionInfo{
 		Name:          "test-session",
 		WorkspacePath: tmpDir,
@@ -121,22 +121,15 @@ echo "This is the copilot response"
 		t.Fatalf("failed to read response file: %v", err)
 	}
 
-	if len(rf.Messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(rf.Messages))
+	if len(rf.Messages) != 1 {
+		t.Fatalf("expected 1 message (agent only), got %d", len(rf.Messages))
 	}
 
-	if rf.Messages[0].Role != "user" {
-		t.Errorf("first message role = %q, want %q", rf.Messages[0].Role, "user")
+	if rf.Messages[0].Role != "agent" {
+		t.Errorf("message role = %q, want %q", rf.Messages[0].Role, "agent")
 	}
-	if rf.Messages[0].Content != "hello" {
-		t.Errorf("first message content = %q, want %q", rf.Messages[0].Content, "hello")
-	}
-
-	if rf.Messages[1].Role != "agent" {
-		t.Errorf("second message role = %q, want %q", rf.Messages[1].Role, "agent")
-	}
-	if rf.Messages[1].Content != "This is the copilot response\n" {
-		t.Errorf("second message content = %q, want %q", rf.Messages[1].Content, "This is the copilot response\n")
+	if rf.Messages[0].Content != "This is the copilot response\n" {
+		t.Errorf("message content = %q, want %q", rf.Messages[0].Content, "This is the copilot response\n")
 	}
 }
 

@@ -17,15 +17,17 @@ type OpenCodeAdapter struct {
 	pollInterval time.Duration
 	timeout      time.Duration
 	spawnTimeout time.Duration
+	proxy        *SecurityProxy
 }
 
 // NewOpenCodeAdapter returns a new OpenCode adapter.
-func NewOpenCodeAdapter(tmux tmuxRunner) *OpenCodeAdapter {
+func NewOpenCodeAdapter(tmux tmuxRunner, proxy *SecurityProxy) *OpenCodeAdapter {
 	return &OpenCodeAdapter{
 		tmux:         tmux,
 		pollInterval: 1 * time.Second,
 		timeout:      5 * time.Minute,
 		spawnTimeout: 20 * time.Second,
+		proxy:        proxy,
 	}
 }
 
@@ -85,6 +87,13 @@ func (a *OpenCodeAdapter) Spawn(ctx context.Context, session core.SessionInfo) e
 
 // Send sends a message to OpenCode and writes the response to the file.
 func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, message string) error {
+	var flags []SecurityFlag
+
+	// Scan input message for security patterns.
+	if a.proxy != nil {
+		flags = append(flags, a.proxy.Scan(message)...)
+	}
+
 	// Capture pre-send snapshot.
 	snapshot, err := a.tmux.CapturePaneRaw(session.Name, 200)
 	if err != nil {
@@ -103,12 +112,17 @@ func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, me
 
 	snapshotLines := strings.Split(snapshot, "\n")
 
+	var response string
+	var sendErr error
+
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			sendErr = ctx.Err()
+			goto done
 		case <-deadline:
-			return ErrResponseTimeout
+			sendErr = ErrResponseTimeout
+			goto done
 		case <-ticker.C:
 			raw, err := a.tmux.CapturePaneRaw(session.Name, 200)
 			if err != nil {
@@ -126,28 +140,35 @@ func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, me
 
 			// Check if the input prompt has reappeared.
 			if openCodeReadyRe.MatchString(clean) && len(newContent) > 1 {
-				// Append user message to response file.
-				if err := AppendMessage(session.ResponseFile, ResponseMessage{
-					Role:      "user",
-					Content:   message,
-					Timestamp: time.Now().UTC(),
-				}); err != nil {
-					return fmt.Errorf("opencode send: append user message: %w", err)
-				}
-
-				// Append agent response to response file.
-				if err := AppendMessage(session.ResponseFile, ResponseMessage{
-					Role:      "agent",
-					Content:   strings.TrimSpace(clean),
-					Timestamp: time.Now().UTC(),
-				}); err != nil {
-					return fmt.Errorf("opencode send: append agent message: %w", err)
-				}
-
-				return nil
+				response = strings.TrimSpace(clean)
+				goto done
 			}
 		}
 	}
+
+done:
+	// Scan response for security patterns.
+	if a.proxy != nil && response != "" {
+		flags = append(flags, a.proxy.Scan(response)...)
+	}
+
+	// Append agent response to response file.
+	if response != "" {
+		if err := AppendMessage(session.ResponseFile, ResponseMessage{
+			Role:      "agent",
+			Content:   response,
+			Timestamp: time.Now().UTC(),
+		}); err != nil {
+			return fmt.Errorf("opencode send: append agent message: %w", err)
+		}
+	}
+
+	// Return security flags if any.
+	if len(flags) > 0 {
+		return &SecurityFlagError{Flags: flags, Err: sendErr}
+	}
+
+	return sendErr
 }
 
 // IsAlive reports whether the tmux session is still running.
