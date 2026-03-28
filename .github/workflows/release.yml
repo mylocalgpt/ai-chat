@@ -63,4 +63,4 @@ jobs:
           cd npm
           VERSION=${GITHUB_REF_NAME#v}
           npm version $VERSION --no-git-tag-version
-          npm publish --provenance --access public
+          npm publish --access public
