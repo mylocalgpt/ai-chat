@@ -13,8 +13,10 @@ import (
 
 // mockExecutor implements the Executor interface for testing.
 type mockExecutor struct {
-	killCalls  []executorCall
-	spawnCalls []executorCall
+	killCalls       []executorCall
+	spawnCalls      []executorCall
+	executeCalls    []executeCall
+	executeResponse string
 }
 
 type executorCall struct {
@@ -32,8 +34,15 @@ func (m *mockExecutor) SpawnSession(_ context.Context, ws core.Workspace, agent 
 	return nil
 }
 
+type executeCall struct {
+	workspaceID int64
+	agent       string
+	message     string
+}
+
 func (m *mockExecutor) Execute(_ context.Context, ws core.Workspace, agent, message string) (string, error) {
-	return "ok", nil
+	m.executeCalls = append(m.executeCalls, executeCall{ws.ID, agent, message})
+	return m.executeResponse, nil
 }
 
 func TestSessionList(t *testing.T) {
@@ -192,6 +201,70 @@ func TestSessionKill(t *testing.T) {
 	}
 	if res == nil {
 		t.Error("expected result")
+	}
+}
+
+func TestAgentSend(t *testing.T) {
+	ms := newMockStore()
+	exec := &mockExecutor{executeResponse: "agent response here"}
+	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
+
+	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
+
+	res, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{
+		WorkspaceName: "proj1",
+		Agent:         "claude",
+		Message:       "hello agent",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(exec.executeCalls) != 1 {
+		t.Fatalf("expected 1 execute call, got %d", len(exec.executeCalls))
+	}
+	call := exec.executeCalls[0]
+	if call.workspaceID != 1 || call.agent != "claude" || call.message != "hello agent" {
+		t.Errorf("unexpected execute call: %+v", call)
+	}
+
+	tc := res.Content[0].(*gomcp.TextContent)
+	if tc.Text != "agent response here" {
+		t.Errorf("expected response %q, got %q", "agent response here", tc.Text)
+	}
+}
+
+func TestAgentSendFallbackAgent(t *testing.T) {
+	ms := newMockStore()
+	exec := &mockExecutor{executeResponse: "ok"}
+	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
+
+	// No default_agent in metadata, no agent in input - should fall back to "claude".
+	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
+
+	_, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{
+		WorkspaceName: "proj1",
+		Message:       "hello",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(exec.executeCalls) != 1 || exec.executeCalls[0].agent != "claude" {
+		t.Errorf("expected fallback to claude, got %+v", exec.executeCalls)
+	}
+}
+
+func TestAgentSendNilExecutor(t *testing.T) {
+	ms := newMockStore()
+	srv := newTestServer(ms, nil)
+
+	_, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{
+		WorkspaceName: "test",
+		Message:       "hello",
+	})
+	if err == nil {
+		t.Error("expected error for nil executor")
 	}
 }
 

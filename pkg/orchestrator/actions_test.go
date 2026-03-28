@@ -17,17 +17,7 @@ func setupTestOrchestrator(t *testing.T) (*Orchestrator, *store.Store) {
 	t.Helper()
 	// Dummy server that returns a valid response (not used by HandleAction tests)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(ChatResponse{
-			Choices: []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			}{
-				{Message: struct {
-					Content string `json:"content"`
-				}{Content: `{"type":"direct_answer","content":"ok","confidence":0.9,"reasoning":"ok"}`}},
-			},
-		})
+		_, _ = w.Write(chatResponseJSON(`{"type":"direct_answer","content":"ok","confidence":0.9,"reasoning":"ok"}`))
 	}))
 	t.Cleanup(srv.Close)
 

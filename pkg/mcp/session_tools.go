@@ -37,6 +37,13 @@ type SessionKillInput struct {
 	Agent         string `json:"agent,omitempty" jsonschema:"Agent to kill (uses workspace default if omitted)"`
 }
 
+// AgentSendInput is the input for the agent_send tool.
+type AgentSendInput struct {
+	WorkspaceName string `json:"workspace_name" jsonschema:"Name of the workspace to send the message to"`
+	Agent         string `json:"agent,omitempty" jsonschema:"Agent to send to (uses workspace default, then claude)"`
+	Message       string `json:"message" jsonschema:"Message to send to the agent"`
+}
+
 // --- Registration ---
 
 func (s *Server) registerSessionTools() {
@@ -54,6 +61,11 @@ func (s *Server) registerSessionTools() {
 		Name:        "session_kill",
 		Description: "Kill an agent session without respawning",
 	}, s.handleSessionKill)
+
+	gomcp.AddTool(s.inner, &gomcp.Tool{
+		Name:        "agent_send",
+		Description: "Send a message to an AI agent in a workspace and return the response",
+	}, s.handleAgentSend)
 }
 
 // --- Handlers ---
@@ -149,6 +161,33 @@ func (s *Server) handleSessionKill(ctx context.Context, _ *gomcp.CallToolRequest
 	}
 
 	return textResult(fmt.Sprintf("Killed session for workspace: %s", input.WorkspaceName)), nil, nil
+}
+
+func (s *Server) handleAgentSend(ctx context.Context, _ *gomcp.CallToolRequest, input AgentSendInput) (*gomcp.CallToolResult, any, error) {
+	if s.executor == nil {
+		return nil, nil, fmt.Errorf("executor not available - agent_send requires the executor to be wired in")
+	}
+
+	ws, err := s.store.GetWorkspace(ctx, input.WorkspaceName)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil, fmt.Errorf("workspace %q not found", input.WorkspaceName)
+		}
+		return nil, nil, fmt.Errorf("looking up workspace: %w", err)
+	}
+
+	agent, err := s.resolveAgent(input.Agent, ws.Metadata)
+	if err != nil {
+		// Fall back to "claude" when no agent is specified and workspace has no default.
+		agent = "claude"
+	}
+
+	response, err := s.executor.Execute(ctx, *ws, agent, input.Message)
+	if err != nil {
+		return nil, nil, fmt.Errorf("executing agent_send: %w", err)
+	}
+
+	return textResult(response), nil, nil
 }
 
 // --- Helpers ---

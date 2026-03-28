@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -76,17 +75,7 @@ func TestBuildClassifyPrompt_NilWorkspace(t *testing.T) {
 func mockRouterResponse(t *testing.T, response string) *Router {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(ChatResponse{
-			Choices: []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			}{
-				{Message: struct {
-					Content string `json:"content"`
-				}{Content: response}},
-			},
-		})
+		_, _ = w.Write(chatResponseJSON(response))
 	}))
 	t.Cleanup(srv.Close)
 	return NewRouter("test-key").WithBaseURL(srv.URL)

@@ -52,17 +52,7 @@ func (mt *modelTracker) handler() http.HandlerFunc {
 		}
 
 		actionJSON, _ := json.Marshal(action)
-		_ = json.NewEncoder(w).Encode(ChatResponse{
-			Choices: []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			}{
-				{Message: struct {
-					Content string `json:"content"`
-				}{Content: string(actionJSON)}},
-			},
-		})
+		_, _ = w.Write(chatResponseJSON(string(actionJSON)))
 	}
 }
 
