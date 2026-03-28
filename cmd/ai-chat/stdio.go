@@ -55,7 +55,7 @@ func runStdio() {
 	// Wire executor for session management.
 	tmx := executor.NewTmux()
 	registry := executor.NewHarnessRegistry(tmx)
-	exec := executor.NewExecutor(st, tmx, registry)
+	exec := executor.NewExecutor(st, tmx, registry, cfg.ResponsesDir)
 	opts = append(opts, mcppkg.WithExecutor(exec))
 
 	// Wire Telegram adapter if bot token is configured.

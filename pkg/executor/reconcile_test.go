@@ -48,7 +48,7 @@ func TestReconcileMarksCrashedSessions(t *testing.T) {
 	// No live tmux sessions.
 	tmx := newMockTmux()
 	reg := NewHarnessRegistry(NewTmux())
-	exec := NewExecutor(st, tmx, reg)
+	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.ReconcileSessions(context.Background())
 	if err != nil {
@@ -76,7 +76,7 @@ func TestReconcileKeepsAliveSessions(t *testing.T) {
 	tmx.sessions["ai-chat-proj-a1b2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
-	exec := NewExecutor(st, tmx, reg)
+	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.ReconcileSessions(context.Background())
 	if err != nil {
@@ -102,7 +102,7 @@ func TestReconcileCountsOrphans(t *testing.T) {
 	tmx.sessions["ai-chat-orphan-x1y2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
-	exec := NewExecutor(st, tmx, reg)
+	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.ReconcileSessions(context.Background())
 	if err != nil {
@@ -131,7 +131,7 @@ func TestCleanupKillsStale(t *testing.T) {
 	tmx.sessions["ai-chat-proj-a1b2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
-	exec := NewExecutor(st, tmx, reg)
+	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.CleanupStaleSessions(context.Background(), 24*time.Hour)
 	if err != nil {
@@ -170,7 +170,7 @@ func TestCleanupSkipsFresh(t *testing.T) {
 	tmx.sessions["ai-chat-proj-a1b2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
-	exec := NewExecutor(st, tmx, reg)
+	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.CleanupStaleSessions(context.Background(), 24*time.Hour)
 	if err != nil {
@@ -202,7 +202,7 @@ func TestCleanupFallsBackToStartedAt(t *testing.T) {
 	tmx.sessions["ai-chat-proj-a1b2"] = true
 
 	reg := NewHarnessRegistry(NewTmux())
-	exec := NewExecutor(st, tmx, reg)
+	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.CleanupStaleSessions(context.Background(), 24*time.Hour)
 	if err != nil {

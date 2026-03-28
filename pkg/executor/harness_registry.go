@@ -9,13 +9,15 @@ import (
 type HarnessRegistry struct {
 	tmuxHarnesses map[string]AgentHarness
 	cliHarnesses  map[string]CLIHarness
+	adapters      map[string]AgentAdapter
 }
 
 // NewHarnessRegistry returns a registry with the default harnesses registered.
-func NewHarnessRegistry(tmux *Tmux) *HarnessRegistry {
+func NewHarnessRegistry(tmux tmuxRunner) *HarnessRegistry {
 	r := &HarnessRegistry{
 		tmuxHarnesses: make(map[string]AgentHarness),
 		cliHarnesses:  make(map[string]CLIHarness),
+		adapters:      make(map[string]AgentAdapter),
 	}
 	r.tmuxHarnesses["opencode"] = NewOpenCodeHarness(tmux)
 	return r
@@ -29,6 +31,11 @@ func (r *HarnessRegistry) RegisterTmux(name string, h AgentHarness) {
 // RegisterCLI adds a CLI harness for the given agent name.
 func (r *HarnessRegistry) RegisterCLI(name string, h CLIHarness) {
 	r.cliHarnesses[name] = h
+}
+
+// RegisterAdapter adds an adapter for the given agent name.
+func (r *HarnessRegistry) RegisterAdapter(name string, a AgentAdapter) {
+	r.adapters[name] = a
 }
 
 // GetTmux returns the tmux harness for the given agent, or an error if not
@@ -57,7 +64,22 @@ func (r *HarnessRegistry) IsTmux(agent string) bool {
 	return ok
 }
 
-// KnownAgents returns all registered agent names (both tmux and CLI), sorted
+// GetAdapter returns the adapter for the given agent, or an error if not found.
+func (r *HarnessRegistry) GetAdapter(agent string) (AgentAdapter, error) {
+	a, ok := r.adapters[agent]
+	if !ok {
+		return nil, fmt.Errorf("no adapter for agent %q", agent)
+	}
+	return a, nil
+}
+
+// IsAdapter reports whether the agent is registered as an adapter.
+func (r *HarnessRegistry) IsAdapter(agent string) bool {
+	_, ok := r.adapters[agent]
+	return ok
+}
+
+// KnownAgents returns all registered agent names (tmux, CLI, and adapters), sorted
 // alphabetically.
 func (r *HarnessRegistry) KnownAgents() []string {
 	seen := make(map[string]struct{})
@@ -65,6 +87,9 @@ func (r *HarnessRegistry) KnownAgents() []string {
 		seen[name] = struct{}{}
 	}
 	for name := range r.cliHarnesses {
+		seen[name] = struct{}{}
+	}
+	for name := range r.adapters {
 		seen[name] = struct{}{}
 	}
 	agents := make([]string, 0, len(seen))

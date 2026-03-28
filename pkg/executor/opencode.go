@@ -10,13 +10,13 @@ import (
 
 // OpenCodeHarness implements AgentHarness for OpenCode running in tmux.
 type OpenCodeHarness struct {
-	tmux         *Tmux
+	tmux         tmuxRunner
 	pollInterval time.Duration
 	timeout      time.Duration
 }
 
 // NewOpenCodeHarness returns a new OpenCode harness.
-func NewOpenCodeHarness(tmux *Tmux) *OpenCodeHarness {
+func NewOpenCodeHarness(tmux tmuxRunner) *OpenCodeHarness {
 	return &OpenCodeHarness{
 		tmux:         tmux,
 		pollInterval: 1 * time.Second,

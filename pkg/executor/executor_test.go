@@ -3,7 +3,9 @@ package executor
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
@@ -115,7 +117,7 @@ func (m *mockCLIHarness) Execute(_ context.Context, workDir, message string) (st
 }
 
 func TestExecuteRemoteWorkspaceReturnsError(t *testing.T) {
-	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux()))
+	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux()), "")
 
 	ws := core.Workspace{ID: 1, Name: "remote-proj", Path: "/tmp", Host: "mac"}
 	_, err := exec.Execute(context.Background(), ws, "opencode", "hello")
@@ -130,7 +132,7 @@ func TestExecuteCLIPath(t *testing.T) {
 	reg := NewHarnessRegistry(NewTmux())
 	reg.RegisterCLI("test-cli", &mockCLIHarness{response: "test response"})
 
-	exec := NewExecutor(st, tmx, reg)
+	exec := NewExecutor(st, tmx, reg, "")
 
 	ws := core.Workspace{ID: 1, Name: "proj", Path: "/tmp"}
 	resp, err := exec.Execute(context.Background(), ws, "test-cli", "hello")
@@ -157,7 +159,7 @@ func TestSessionInfoEnrichment(t *testing.T) {
 		{ID: 2, WorkspaceID: 2, Agent: "opencode", Slug: "c3d4", TmuxSession: "ai-chat-old-c3d4", Status: string(core.SessionCrashed)},
 	}
 
-	exec := NewExecutor(st, tmx, NewHarnessRegistry(NewTmux()))
+	exec := NewExecutor(st, tmx, NewHarnessRegistry(NewTmux()), "")
 	infos, err := exec.ListSessions(context.Background())
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
@@ -178,11 +180,173 @@ func TestSessionInfoEnrichment(t *testing.T) {
 }
 
 func TestKillSessionNoActiveSession(t *testing.T) {
-	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux()))
+	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux()), "")
 
 	// Killing a session when none exists should not error.
 	err := exec.KillSession(context.Background(), 999, "opencode")
 	if err != nil {
 		t.Errorf("KillSession with no active session: %v", err)
+	}
+}
+
+// mockAdapter implements AgentAdapter for testing.
+type mockAdapter struct {
+	name     string
+	alive    bool
+	sendErr  error
+	spawnErr error
+	stopErr  error
+	lastSend string
+	lastSess core.SessionInfo
+	spawned  bool
+	stopped  bool
+}
+
+func (m *mockAdapter) Name() string {
+	return m.name
+}
+
+func (m *mockAdapter) Spawn(_ context.Context, session core.SessionInfo) error {
+	m.spawned = true
+	m.lastSess = session
+	// Create the response file as a real adapter would.
+	_, err := NewResponseFile(filepath.Dir(session.ResponseFile), session)
+	if err != nil {
+		return err
+	}
+	return m.spawnErr
+}
+
+func (m *mockAdapter) Send(_ context.Context, session core.SessionInfo, message string) error {
+	m.lastSend = message
+	m.lastSess = session
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	// Write a response to the file.
+	_ = AppendMessage(session.ResponseFile, ResponseMessage{
+		Role:      "agent",
+		Content:   "mock response: " + message,
+		Timestamp: time.Now().UTC(),
+	})
+	return nil
+}
+
+func (m *mockAdapter) IsAlive(_ core.SessionInfo) bool {
+	return m.alive
+}
+
+func (m *mockAdapter) Stop(_ context.Context, _ core.SessionInfo) error {
+	m.stopped = true
+	return m.stopErr
+}
+
+func TestExecuteAdapterPath(t *testing.T) {
+	tmx := newMockTmux()
+	st := newMockStore()
+	reg := NewHarnessRegistry(NewTmux())
+	adapter := &mockAdapter{name: "test-adapter", alive: true}
+	reg.RegisterAdapter("test-adapter", adapter)
+
+	// Use a temp directory for responses.
+	tmpDir := t.TempDir()
+	exec := NewExecutor(st, tmx, reg, tmpDir)
+
+	ws := core.Workspace{ID: 1, Name: "proj", Path: "/tmp"}
+	resp, err := exec.Execute(context.Background(), ws, "test-adapter", "hello")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if resp != "mock response: hello" {
+		t.Errorf("got %q, want %q", resp, "mock response: hello")
+	}
+
+	// Session should have been created.
+	if len(st.sessions) != 1 {
+		t.Errorf("adapter path should create session, got %d", len(st.sessions))
+	}
+
+	// Adapter should have been spawned.
+	if !adapter.spawned {
+		t.Error("adapter should have been spawned")
+	}
+
+	// Response file should exist.
+	sess := st.sessions[0]
+	responsePath := ResponseFilePath(tmpDir, sess.TmuxSession)
+	if _, err := ReadResponseFile(responsePath); err != nil {
+		t.Errorf("response file should exist: %v", err)
+	}
+}
+
+func TestExecuteAdapterReusesSession(t *testing.T) {
+	tmx := newMockTmux()
+	st := newMockStore()
+	reg := NewHarnessRegistry(NewTmux())
+	adapter := &mockAdapter{name: "test-adapter", alive: true}
+	reg.RegisterAdapter("test-adapter", adapter)
+
+	tmpDir := t.TempDir()
+	exec := NewExecutor(st, tmx, reg, tmpDir)
+
+	ws := core.Workspace{ID: 1, Name: "proj", Path: "/tmp"}
+
+	// First call creates session.
+	_, err := exec.Execute(context.Background(), ws, "test-adapter", "first")
+	if err != nil {
+		t.Fatalf("Execute 1: %v", err)
+	}
+
+	// Reset spawn tracking.
+	adapter.spawned = false
+
+	// Second call should reuse session.
+	_, err = exec.Execute(context.Background(), ws, "test-adapter", "second")
+	if err != nil {
+		t.Fatalf("Execute 2: %v", err)
+	}
+
+	// Should not have spawned again.
+	if adapter.spawned {
+		t.Error("adapter should not have been spawned again")
+	}
+
+	// Only one session should exist.
+	if len(st.sessions) != 1 {
+		t.Errorf("should have 1 session, got %d", len(st.sessions))
+	}
+}
+
+func TestExecuteAdapterRespawnsDeadSession(t *testing.T) {
+	tmx := newMockTmux()
+	st := newMockStore()
+	reg := NewHarnessRegistry(NewTmux())
+	adapter := &mockAdapter{name: "test-adapter", alive: true} // alive initially
+	reg.RegisterAdapter("test-adapter", adapter)
+
+	tmpDir := t.TempDir()
+	exec := NewExecutor(st, tmx, reg, tmpDir)
+
+	ws := core.Workspace{ID: 1, Name: "proj", Path: "/tmp"}
+
+	// First call creates session.
+	_, err := exec.Execute(context.Background(), ws, "test-adapter", "first")
+	if err != nil {
+		t.Fatalf("Execute 1: %v", err)
+	}
+
+	// Mark as not alive for second call (session is now "dead").
+	adapter.alive = false
+	adapter.spawned = false
+
+	// Second call should respawn because session is not alive.
+	_, err = exec.Execute(context.Background(), ws, "test-adapter", "second")
+	if err != nil {
+		t.Fatalf("Execute 2: %v", err)
+	}
+
+	// Should have spawned again.
+	if !adapter.spawned {
+		t.Error("adapter should have been spawned again")
 	}
 }

@@ -75,7 +75,7 @@ func runStart(args []string) {
 	// Initialize executor.
 	tmuxRunner := executor.NewTmux()
 	registry := executor.NewHarnessRegistry(tmuxRunner)
-	exec := executor.NewExecutor(st, tmuxRunner, registry)
+	exec := executor.NewExecutor(st, tmuxRunner, registry, cfg.ResponsesDir)
 
 	// Clean up stale sessions from previous runs.
 	if res, err := exec.ReconcileSessions(context.Background()); err != nil {
