@@ -134,6 +134,9 @@ func (c *Config) Validate() error {
 	if len(c.Telegram.AllowedUsers) == 0 {
 		return fmt.Errorf("telegram.allowed_users must have at least one entry")
 	}
+	if c.OpenRouter.APIKey == "" {
+		return fmt.Errorf("openrouter.api_key is required")
+	}
 	return nil
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -58,6 +59,7 @@ func runStart(args []string) {
 		slog.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
+	defer db.Close()
 
 	if err := store.Migrate(db); err != nil {
 		slog.Error("failed to run migrations", "error", err)
@@ -79,6 +81,13 @@ func runStart(args []string) {
 	registry := executor.NewHarnessRegistry(tmuxRunner)
 	exec := executor.NewExecutor(st, tmuxRunner, registry)
 
+	// Clean up stale sessions from previous runs.
+	if res, err := exec.ReconcileSessions(context.Background()); err != nil {
+		slog.Warn("session reconciliation failed", "error", err)
+	} else if res.Crashed > 0 || res.Orphaned > 0 {
+		slog.Info("reconciled sessions", "crashed", res.Crashed, "orphaned", res.Orphaned)
+	}
+
 	// Initialize Telegram adapter.
 	tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
 		BotToken:     cfg.Telegram.BotToken,
@@ -94,6 +103,15 @@ func runStart(args []string) {
 		return func(ctx context.Context, msg core.InboundMessage) {
 			log := slog.With("channel", msg.Channel, "sender", msg.SenderID)
 
+			// Persist inbound message.
+			st.CreateMessage(ctx, &core.Message{
+				Channel:   msg.Channel,
+				SenderID:  msg.SenderID,
+				Content:   msg.Content,
+				Direction: core.InboundDirection,
+				Status:    core.StatusDone,
+			})
+
 			result, err := orch.HandleMessage(ctx, msg)
 			if err != nil {
 				log.Error("orchestrator failed", "error", err)
@@ -105,18 +123,20 @@ func runStart(args []string) {
 				return
 			}
 
+			var wsID *int64
 			response := result.Response
 			if result.Action.Type == orchestrator.ActionAgentTask {
-				ws, err := st.GetWorkspace(ctx, result.Action.Workspace)
+				ws, err := resolveWorkspace(ctx, st, result.Action.Workspace, msg.SenderID, msg.Channel)
 				if err != nil {
-					log.Error("workspace not found", "workspace", result.Action.Workspace, "error", err)
+					log.Error("no workspace available", "error", err)
 					send(ctx, core.OutboundMessage{
 						Channel:     msg.Channel,
 						RecipientID: msg.SenderID,
-						Content:     "Workspace not found: " + result.Action.Workspace,
+						Content:     "No workspace found. Create one first or specify a workspace name.",
 					})
 					return
 				}
+				wsID = &ws.ID
 				agent := result.Action.Agent
 				if agent == "" {
 					agent = "claude"
@@ -127,7 +147,7 @@ func runStart(args []string) {
 					send(ctx, core.OutboundMessage{
 						Channel:     msg.Channel,
 						RecipientID: msg.SenderID,
-						Content:     "Agent error: " + err.Error(),
+						Content:     "Something went wrong with the agent. Please try again.",
 					})
 					return
 				}
@@ -135,6 +155,15 @@ func runStart(args []string) {
 			}
 
 			if response != "" {
+				// Persist outbound message.
+				st.CreateMessage(ctx, &core.Message{
+					Channel:     msg.Channel,
+					SenderID:    msg.SenderID,
+					WorkspaceID: wsID,
+					Content:     response,
+					Direction:   core.OutboundDirection,
+					Status:      core.StatusDone,
+				})
 				send(ctx, core.OutboundMessage{
 					Channel:     msg.Channel,
 					RecipientID: msg.SenderID,
@@ -180,7 +209,13 @@ func runStart(args []string) {
 		mux.Handle("/", webpkg.NewFileHandler(aichat.WebDist))
 	}
 
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
+	srv := &http.Server{
+		Addr:         cfg.HTTPAddr,
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -201,4 +236,17 @@ func runStart(args []string) {
 	srv.Shutdown(shutdownCtx)
 	st.Close()
 	audit.CloseGlobal()
+}
+
+// resolveWorkspace looks up a workspace by name. If name is empty, it falls
+// back to the user's active workspace from their stored context.
+func resolveWorkspace(ctx context.Context, st *store.Store, name, senderID, channel string) (*core.Workspace, error) {
+	if name != "" {
+		return st.GetWorkspace(ctx, name)
+	}
+	uc, err := st.GetUserContext(ctx, senderID, channel)
+	if err != nil {
+		return nil, fmt.Errorf("no workspace specified and no active workspace set")
+	}
+	return st.GetWorkspaceByID(ctx, uc.ActiveWorkspaceID)
 }

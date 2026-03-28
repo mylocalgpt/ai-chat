@@ -88,7 +88,8 @@ func TestLoad(t *testing.T) {
 				"telegram": {
 					"bot_token": "tok",
 					"allowed_users": [1]
-				}
+				},
+				"openrouter": {"api_key": "or-test"}
 			}`,
 			check: func(t *testing.T, cfg *Config) {
 				home, _ := os.UserHomeDir()
@@ -112,6 +113,7 @@ func TestLoad(t *testing.T) {
 					"bot_token": "tok",
 					"allowed_users": [1]
 				},
+				"openrouter": {"api_key": "or-test"},
 				"db_path": "~/data/state.db"
 			}`,
 			check: func(t *testing.T, cfg *Config) {
@@ -216,7 +218,20 @@ func TestValidate(t *testing.T) {
 					BotToken:     "tok",
 					AllowedUsers: []int64{1},
 				},
+				OpenRouter: OpenRouterConfig{
+					APIKey: "or-key",
+				},
 			},
+		},
+		{
+			name: "missing openrouter api_key",
+			cfg: Config{
+				Telegram: TelegramConfig{
+					BotToken:     "tok",
+					AllowedUsers: []int64{1},
+				},
+			},
+			wantErr: "openrouter.api_key is required",
 		},
 		{
 			name: "missing bot_token",

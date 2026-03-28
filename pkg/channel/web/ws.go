@@ -118,7 +118,7 @@ func (wc *WebChannel) handleWS(w http.ResponseWriter, r *http.Request) {
 
 		switch msg.Type {
 		case wsMsgMessage:
-			wc.handleMessage(ctx, conn, msg)
+			go wc.handleMessage(ctx, conn, msg)
 		case wsMsgSwitchWorkspace:
 			wc.handleSwitchWorkspace(ctx, conn, msg)
 		default:
