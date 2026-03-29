@@ -138,6 +138,7 @@ func forwardResponses(ctx context.Context, st messageStore, events <-chan core.R
 						responseText, err := sc.SendStreaming(ctx, chatID, replyToID, event.AgentSessionID, event.Events)
 						if err != nil {
 							slog.Warn("streaming delivery failed", "error", err)
+							drainEvents(event.Events)
 							continue
 						}
 						content = responseText
