@@ -116,7 +116,7 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 	adapter := &TelegramAdapter{
 		allowedUsers:    allowed,
 		store:           st,
-		callbackHandler: newCallbackHandler(nil, allowed, nil),
+		callbackHandler: newCallbackHandler(nil, allowed, nil, nil, ""),
 	}
 
 	b, err := bot.New(cfg.BotToken,
@@ -127,6 +127,7 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 		return nil, fmt.Errorf("creating telegram bot: %w", err)
 	}
 	adapter.bot = &liveTelegramBot{inner: b}
+	adapter.callbackHandler.bot = adapter.bot
 
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "", bot.MatchTypePrefix, func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		adapter.callbackHandler.handleCallback(ctx, &liveTelegramBot{inner: b}, update)
@@ -158,6 +159,12 @@ func (t *TelegramAdapter) SetShutdownFunc(fn context.CancelFunc) {
 // presses the "Stop" inline keyboard button.
 func (t *TelegramAdapter) SetAbortFunc(fn func(ctx context.Context, agentSessionID string) error) {
 	t.callbackHandler.abortFunc = fn
+}
+
+// SetResponsesDir sets the directory used to read response files when the user
+// presses the "Show full output" inline keyboard button.
+func (t *TelegramAdapter) SetResponsesDir(dir string) {
+	t.callbackHandler.responsesDir = dir
 }
 
 func (t *TelegramAdapter) handleBotError(err error) {

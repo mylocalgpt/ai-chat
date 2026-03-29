@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"github.com/mylocalgpt/ai-chat/pkg/executor"
 	"github.com/mylocalgpt/ai-chat/pkg/router"
 )
 
@@ -15,13 +16,17 @@ type callbackHandler struct {
 	router       Router
 	allowedUsers map[int64]bool
 	abortFunc    func(ctx context.Context, agentSessionID string) error
+	bot          telegramBot // full bot interface for SendDocument
+	responsesDir string      // directory containing response JSON files
 }
 
-func newCallbackHandler(r Router, allowedUsers map[int64]bool, abortFunc func(ctx context.Context, agentSessionID string) error) *callbackHandler {
+func newCallbackHandler(r Router, allowedUsers map[int64]bool, abortFunc func(ctx context.Context, agentSessionID string) error, b telegramBot, responsesDir string) *callbackHandler {
 	return &callbackHandler{
 		router:       r,
 		allowedUsers: allowedUsers,
 		abortFunc:    abortFunc,
+		bot:          b,
+		responsesDir: responsesDir,
 	}
 }
 
@@ -76,6 +81,8 @@ func (h *callbackHandler) handleCallback(ctx context.Context, b telegramCallback
 		h.handleSecurityCallback(ctx, b, chatID, messageID, rest)
 	case "stop":
 		h.handleStopCallback(ctx, b, chatID, messageID, rest)
+	case "full":
+		h.handleFullOutputCallback(ctx, b, chatID, messageID, rest)
 	default:
 		slog.Warn("unknown callback prefix", "prefix", prefix)
 	}
@@ -152,6 +159,46 @@ func (h *callbackHandler) handleStopCallback(ctx context.Context, b telegramCall
 		MessageID: messageID,
 		Text:      "Stopping...",
 	})
+}
+
+func (h *callbackHandler) handleFullOutputCallback(ctx context.Context, b telegramCallbackBot, chatID int64, messageID int, data string) {
+	parts := strings.SplitN(data, ":", 2)
+	if len(parts) != 2 {
+		slog.Warn("invalid full output callback data", "data", data)
+		return
+	}
+	sessionName := parts[0]
+	msgIdx, err := strconv.Atoi(parts[1])
+	if err != nil {
+		slog.Warn("invalid message index in full output callback", "data", data, "error", err)
+		return
+	}
+
+	path := executor.ResponseFilePath(h.responsesDir, sessionName)
+	rf, err := executor.ReadResponseFile(path)
+	if err != nil {
+		slog.Warn("failed to read response file for full output", "path", path, "error", err)
+		return
+	}
+
+	// Find agent message at index.
+	agentIdx := 0
+	for _, m := range rf.Messages {
+		if m.Role == "agent" {
+			if agentIdx == msgIdx {
+				filename := documentFilename(sessionName, msgIdx)
+				caption := truncateCaption(m.Content, 200)
+
+				if err := SendDocumentAttachment(ctx, h.bot, chatID, m.Content, filename, caption); err != nil {
+					slog.Warn("failed to send full output document", "error", err)
+				}
+				return
+			}
+			agentIdx++
+		}
+	}
+
+	slog.Warn("message index out of range for full output", "session", sessionName, "idx", msgIdx, "agent_messages", agentIdx)
 }
 
 func (h *callbackHandler) handleSecurityCallback(ctx context.Context, b telegramCallbackBot, chatID int64, messageID int, data string) {

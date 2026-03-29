@@ -37,7 +37,7 @@ func TestHandleStopCallback_Success(t *testing.T) {
 		return nil
 	}
 
-	h := newCallbackHandler(nil, map[int64]bool{}, abortFn)
+	h := newCallbackHandler(nil, map[int64]bool{}, abortFn, nil, "")
 	h.handleStopCallback(context.Background(), mb, 123, 42, "ses_abc123")
 
 	if calledWith != "ses_abc123" {
@@ -62,7 +62,7 @@ func TestHandleStopCallback_Success(t *testing.T) {
 func TestHandleStopCallback_NilAbortFunc(t *testing.T) {
 	mb := &mockCallbackBot{}
 
-	h := newCallbackHandler(nil, map[int64]bool{}, nil)
+	h := newCallbackHandler(nil, map[int64]bool{}, nil, nil, "")
 	h.handleStopCallback(context.Background(), mb, 123, 42, "ses_abc123")
 
 	if len(mb.editedMessages) != 1 {
@@ -79,7 +79,7 @@ func TestHandleStopCallback_AbortError(t *testing.T) {
 		return errors.New("connection refused")
 	}
 
-	h := newCallbackHandler(nil, map[int64]bool{}, abortFn)
+	h := newCallbackHandler(nil, map[int64]bool{}, abortFn, nil, "")
 	h.handleStopCallback(context.Background(), mb, 123, 42, "ses_abc123")
 
 	if len(mb.editedMessages) != 1 {
@@ -98,7 +98,7 @@ func TestHandleCallback_StopRoutesCorrectly(t *testing.T) {
 		return nil
 	}
 
-	h := newCallbackHandler(nil, map[int64]bool{42: true}, abortFn)
+	h := newCallbackHandler(nil, map[int64]bool{42: true}, abortFn, nil, "")
 
 	update := &models.Update{
 		CallbackQuery: &models.CallbackQuery{
@@ -147,7 +147,7 @@ func TestHandleCallback_StopUnauthorized(t *testing.T) {
 	}
 
 	// User 99 is NOT in allowed list
-	h := newCallbackHandler(nil, map[int64]bool{42: true}, abortFn)
+	h := newCallbackHandler(nil, map[int64]bool{42: true}, abortFn, nil, "")
 
 	update := &models.Update{
 		CallbackQuery: &models.CallbackQuery{
@@ -186,7 +186,7 @@ func TestHandleCallback_StopUnauthorized(t *testing.T) {
 
 func TestSetAbortFunc(t *testing.T) {
 	adapter := &TelegramAdapter{
-		callbackHandler: newCallbackHandler(nil, map[int64]bool{}, nil),
+		callbackHandler: newCallbackHandler(nil, map[int64]bool{}, nil, nil, ""),
 	}
 
 	if adapter.callbackHandler.abortFunc != nil {

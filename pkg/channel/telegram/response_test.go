@@ -76,7 +76,7 @@ func newResponseTestAdapter(mb *mockResponseBot) *TelegramAdapter {
 	return &TelegramAdapter{
 		bot:             mb,
 		allowedUsers:    map[int64]bool{},
-		callbackHandler: newCallbackHandler(nil, map[int64]bool{}, nil),
+		callbackHandler: newCallbackHandler(nil, map[int64]bool{}, nil, nil, ""),
 	}
 }
 
