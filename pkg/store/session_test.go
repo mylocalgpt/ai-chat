@@ -171,3 +171,70 @@ func TestListSessionsEmpty(t *testing.T) {
 		t.Errorf("len = %d, want 0", len(sessions))
 	}
 }
+
+func TestGetSessionByReferenceUsesSlugForPlainReference(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	w1, err := s.CreateWorkspace(ctx, "test-ws-1", "/tmp/ws1", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace 1: %v", err)
+	}
+	w2, err := s.CreateWorkspace(ctx, "test-ws-2", "/tmp/ws2", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace 2: %v", err)
+	}
+	w3, err := s.CreateWorkspace(ctx, "test-ws-3", "/tmp/ws3", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace 3: %v", err)
+	}
+
+	target, err := s.CreateSession(ctx, w1.ID, "opencode", "slug1", "ai-chat-test-ws-1-slug1")
+	if err != nil {
+		t.Fatalf("CreateSession target: %v", err)
+	}
+	if _, err := s.CreateSession(ctx, w2.ID, "opencode", "other1", "ai-chat-test-ws-2-other1"); err != nil {
+		t.Fatalf("CreateSession other: %v", err)
+	}
+	if _, err := s.CreateSession(ctx, w3.ID, "opencode", "other2", "ai-chat-test-ws-3-other2"); err != nil {
+		t.Fatalf("CreateSession other: %v", err)
+	}
+
+	sess, err := s.GetSessionByReference(ctx, "slug1")
+	if err != nil {
+		t.Fatalf("GetSessionByReference: %v", err)
+	}
+	if sess.ID != target.ID {
+		t.Fatalf("ID = %d, want %d", sess.ID, target.ID)
+	}
+}
+
+func TestGetSessionByReferenceInWorkspaceUsesSlugForPlainReference(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	w1, err := s.CreateWorkspace(ctx, "test-ws-1", "/tmp/ws1", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace 1: %v", err)
+	}
+	w2, err := s.CreateWorkspace(ctx, "test-ws-2", "/tmp/ws2", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace 2: %v", err)
+	}
+
+	target, err := s.CreateSession(ctx, w1.ID, "opencode", "slug1", "ai-chat-test-ws-1-slug1")
+	if err != nil {
+		t.Fatalf("CreateSession target: %v", err)
+	}
+	if _, err := s.CreateSession(ctx, w2.ID, "opencode", "slug1", "ai-chat-test-ws-2-slug1"); err != nil {
+		t.Fatalf("CreateSession duplicate slug: %v", err)
+	}
+
+	sess, err := s.GetSessionByReferenceInWorkspace(ctx, w1.ID, "slug1")
+	if err != nil {
+		t.Fatalf("GetSessionByReferenceInWorkspace: %v", err)
+	}
+	if sess.ID != target.ID {
+		t.Fatalf("ID = %d, want %d", sess.ID, target.ID)
+	}
+}

@@ -300,8 +300,12 @@ func (s *Store) GetSessionByName(ctx context.Context, name string) (*core.Sessio
 
 func (s *Store) GetSessionByReference(ctx context.Context, reference string) (*core.Session, error) {
 	_, slug, isFullName := ParseSessionReference(reference)
+	lookupSlug := reference
 	if isFullName {
 		return s.GetSessionByName(ctx, reference)
+	}
+	if slug != "" {
+		lookupSlug = slug
 	}
 
 	sessions, err := s.ListSessions(ctx)
@@ -311,7 +315,7 @@ func (s *Store) GetSessionByReference(ctx context.Context, reference string) (*c
 
 	var matches []core.Session
 	for _, sess := range sessions {
-		if sess.Slug == slug {
+		if sess.Slug == lookupSlug {
 			matches = append(matches, sess)
 		}
 	}
@@ -328,6 +332,7 @@ func (s *Store) GetSessionByReference(ctx context.Context, reference string) (*c
 
 func (s *Store) GetSessionByReferenceInWorkspace(ctx context.Context, workspaceID int64, reference string) (*core.Session, error) {
 	workspace, slug, isFullName := ParseSessionReference(reference)
+	lookupSlug := reference
 	if isFullName {
 		ws, err := s.GetWorkspace(ctx, workspace)
 		if err != nil {
@@ -336,8 +341,9 @@ func (s *Store) GetSessionByReferenceInWorkspace(ctx context.Context, workspaceI
 		if ws.ID != workspaceID {
 			return nil, fmt.Errorf("session reference %q: %w", reference, ErrNotFound)
 		}
+		lookupSlug = slug
 	}
-	return s.GetSessionBySlug(ctx, workspaceID, slug)
+	return s.GetSessionBySlug(ctx, workspaceID, lookupSlug)
 }
 
 func ParseSessionReference(name string) (workspace, slug string, isFullName bool) {
