@@ -113,9 +113,127 @@ func convertBlockquotes(text string) string {
 	return strings.Join(result, "\n")
 }
 
+var tableSepRegex = regexp.MustCompile(`^\|?[\s\-:]+(\|[\s\-:]+)+\|?\s*$`)
+
+func isTableSeparator(line string) bool {
+	return tableSepRegex.MatchString(strings.TrimSpace(line))
+}
+
+func isTableRow(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.Contains(trimmed, "|")
+}
+
+func parseCells(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	// Split on pipe
+	parts := strings.Split(trimmed, "|")
+	// Remove leading empty element if line starts with |
+	if len(parts) > 0 && strings.TrimSpace(parts[0]) == "" {
+		parts = parts[1:]
+	}
+	// Remove trailing empty element if line ends with |
+	if len(parts) > 0 && strings.TrimSpace(parts[len(parts)-1]) == "" {
+		parts = parts[:len(parts)-1]
+	}
+	// Trim whitespace from each cell
+	cells := make([]string, len(parts))
+	for i, p := range parts {
+		cells[i] = strings.TrimSpace(p)
+	}
+	return cells
+}
+
+func formatTable(lines []string) string {
+	// Parse all rows, skipping the separator (index 1)
+	var rows [][]string
+	for i, line := range lines {
+		if i == 1 {
+			continue // skip separator row
+		}
+		rows = append(rows, parseCells(line))
+	}
+	if len(rows) == 0 {
+		return strings.Join(lines, "\n")
+	}
+
+	// Determine the maximum number of columns
+	maxCols := 0
+	for _, row := range rows {
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
+	}
+
+	// Calculate max width per column
+	colWidths := make([]int, maxCols)
+	for _, row := range rows {
+		for col := 0; col < maxCols; col++ {
+			cellLen := 0
+			if col < len(row) {
+				cellLen = len(row[col])
+			}
+			if cellLen > colWidths[col] {
+				colWidths[col] = cellLen
+			}
+		}
+	}
+
+	// Build padded rows
+	var sb strings.Builder
+	sb.WriteString("<pre>")
+	for ri, row := range rows {
+		if ri > 0 {
+			sb.WriteString("\n")
+		}
+		for col := 0; col < maxCols; col++ {
+			if col > 0 {
+				sb.WriteString("  ")
+			}
+			cell := ""
+			if col < len(row) {
+				cell = row[col]
+			}
+			sb.WriteString(cell)
+			// Pad with spaces to column width
+			for pad := len(cell); pad < colWidths[col]; pad++ {
+				sb.WriteString(" ")
+			}
+		}
+	}
+	sb.WriteString("</pre>")
+	return sb.String()
+}
+
+func convertTables(text string) string {
+	lines := strings.Split(text, "\n")
+	var result []string
+	i := 0
+
+	for i < len(lines) {
+		// Detect table start: a line with | and next line is separator
+		if isTableRow(lines[i]) && i+1 < len(lines) && isTableSeparator(lines[i+1]) {
+			// Collect all consecutive table lines
+			tableStart := i
+			tableEnd := i
+			for tableEnd < len(lines) && isTableRow(lines[tableEnd]) {
+				tableEnd++
+			}
+			result = append(result, formatTable(lines[tableStart:tableEnd]))
+			i = tableEnd
+		} else {
+			result = append(result, lines[i])
+			i++
+		}
+	}
+	return strings.Join(result, "\n")
+}
+
 func convertMarkdownToHTML(text string) string {
 	linkRegex := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	text = linkRegex.ReplaceAllString(text, `<a href="$2">$1</a>`)
+
+	text = convertTables(text)
 
 	strikethroughRegex := regexp.MustCompile(`~~(.+?)~~`)
 	text = strikethroughRegex.ReplaceAllString(text, "<s>$1</s>")

@@ -611,3 +611,214 @@ func TestFormatHTMLHorizontalRulePipeline(t *testing.T) {
 		t.Errorf("text below hr should be preserved, got %q", result)
 	}
 }
+
+func TestIsTableSeparator(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"| --- | --- |", true},
+		{"|---|---|", true},
+		{"| :--- | ---: |", true},
+		{"| :---: | :---: |", true},
+		{" | --- | --- | ", true},
+		{"--- | ---", true},
+		{"just text", false},
+		{"|", false},
+		{"| text | more |", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isTableSeparator(tt.input)
+			if got != tt.want {
+				t.Errorf("isTableSeparator(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTableRow(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"| col1 | col2 |", true},
+		{"col1 | col2", true},
+		{"no pipe here", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isTableRow(tt.input)
+			if got != tt.want {
+				t.Errorf("isTableRow(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCells(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "with leading and trailing pipes",
+			input: "| col1 | col2 | col3 |",
+			want:  []string{"col1", "col2", "col3"},
+		},
+		{
+			name:  "without leading and trailing pipes",
+			input: "col1 | col2 | col3",
+			want:  []string{"col1", "col2", "col3"},
+		},
+		{
+			name:  "extra whitespace",
+			input: "|  spaced  |  out  |",
+			want:  []string{"spaced", "out"},
+		},
+		{
+			name:  "empty cell in middle",
+			input: "| a |  | c |",
+			want:  []string{"a", "", "c"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseCells(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d cells %v, want %d cells %v", len(got), got, len(tt.want), tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("cell %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestConvertTablesSimple(t *testing.T) {
+	input := "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |"
+	result := convertTables(input)
+
+	if !strings.Contains(result, "<pre>") {
+		t.Errorf("table should be wrapped in <pre>, got %q", result)
+	}
+	if !strings.Contains(result, "</pre>") {
+		t.Errorf("table should have closing </pre>, got %q", result)
+	}
+	if !strings.Contains(result, "Name") {
+		t.Errorf("header should be present, got %q", result)
+	}
+	if !strings.Contains(result, "Alice") {
+		t.Errorf("data should be present, got %q", result)
+	}
+	// Separator row should be removed
+	if strings.Contains(result, "---") {
+		t.Errorf("separator row should be removed, got %q", result)
+	}
+}
+
+func TestConvertTablesSpecialChars(t *testing.T) {
+	// After HTML escaping, &amp; and &lt; are multi-char sequences
+	input := "| Key | Value |\n| --- | --- |\n| &amp;foo | &lt;bar&gt; |"
+	result := convertTables(input)
+
+	if !strings.Contains(result, "<pre>") {
+		t.Errorf("table should be wrapped in <pre>, got %q", result)
+	}
+	if !strings.Contains(result, "&amp;foo") {
+		t.Errorf("escaped content should be preserved, got %q", result)
+	}
+	if !strings.Contains(result, "&lt;bar&gt;") {
+		t.Errorf("escaped content should be preserved, got %q", result)
+	}
+}
+
+func TestConvertTablesVaryingWidths(t *testing.T) {
+	input := "| A | LongColumnName |\n| --- | --- |\n| short | x |"
+	result := convertTables(input)
+
+	if !strings.Contains(result, "<pre>") {
+		t.Errorf("should contain <pre>, got %q", result)
+	}
+	// Check that columns are aligned: header "A" should be padded to match "short"
+	// and "LongColumnName" should remain as is since it's the widest
+	lines := strings.Split(strings.TrimPrefix(strings.TrimSuffix(result, "</pre>"), "<pre>"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 data rows, got %d: %v", len(lines), lines)
+	}
+	// Both rows should have the same length due to padding
+	if len(lines[0]) != len(lines[1]) {
+		t.Errorf("rows should have same padded length: %q (%d) vs %q (%d)",
+			lines[0], len(lines[0]), lines[1], len(lines[1]))
+	}
+}
+
+func TestConvertTablesWithoutLeadingTrailingPipes(t *testing.T) {
+	input := "Name | Age\n--- | ---\nAlice | 30"
+	result := convertTables(input)
+
+	if !strings.Contains(result, "<pre>") {
+		t.Errorf("should contain <pre>, got %q", result)
+	}
+	if !strings.Contains(result, "Alice") {
+		t.Errorf("should contain data, got %q", result)
+	}
+}
+
+func TestConvertTablesEmbeddedInText(t *testing.T) {
+	input := "Here is a table:\n| A | B |\n| --- | --- |\n| 1 | 2 |\nAnd some text after."
+	result := convertTables(input)
+
+	if !strings.Contains(result, "Here is a table:") {
+		t.Errorf("text before table should be preserved, got %q", result)
+	}
+	if !strings.Contains(result, "<pre>") {
+		t.Errorf("table should be converted, got %q", result)
+	}
+	if !strings.Contains(result, "And some text after.") {
+		t.Errorf("text after table should be preserved, got %q", result)
+	}
+}
+
+func TestConvertTablesNoFalsePositive(t *testing.T) {
+	// A single line with | should NOT be treated as a table
+	input := "Use the pipe | character for OR operations"
+	result := convertTables(input)
+
+	if strings.Contains(result, "<pre>") {
+		t.Errorf("single pipe line should not become a table, got %q", result)
+	}
+	if result != input {
+		t.Errorf("input should be unchanged, got %q", result)
+	}
+}
+
+func TestFormatHTMLTablePipeline(t *testing.T) {
+	input := "# Results\n\nHere are the scores:\n\n| Name | Score |\n| --- | --- |\n| Alice | 95 |\n| Bob | 87 |\n\nGreat work!"
+	result := FormatHTML(input)
+
+	if !strings.Contains(result, "<b>Results</b>") {
+		t.Errorf("heading should be converted, got %q", result)
+	}
+	if !strings.Contains(result, "<pre>") {
+		t.Errorf("table should be in <pre>, got %q", result)
+	}
+	if !strings.Contains(result, "Alice") {
+		t.Errorf("table data should be present, got %q", result)
+	}
+	if !strings.Contains(result, "Great work!") {
+		t.Errorf("trailing text should be preserved, got %q", result)
+	}
+	// Should NOT contain <pre><code> (tables use <pre> alone)
+	if strings.Contains(result, "<pre><code>") {
+		t.Errorf("tables should use <pre> not <pre><code>, got %q", result)
+	}
+	// Separator should be gone
+	if strings.Contains(result, "| ---") {
+		t.Errorf("separator row should be removed, got %q", result)
+	}
+}
