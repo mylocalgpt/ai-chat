@@ -30,6 +30,7 @@ func NewServer(st MCPStore, cfg *MCPConfig, opts ...Option) *Server {
 	srv.registerWorkspaceTools()
 	srv.registerSessionTools()
 	srv.registerHealthTools()
+	srv.registerSelfConfigTools()
 
 	return srv
 }
