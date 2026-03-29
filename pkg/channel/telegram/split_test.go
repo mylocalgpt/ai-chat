@@ -44,25 +44,54 @@ func TestFindCodeFences(t *testing.T) {
 }
 
 func TestFindCodeFencesPositions(t *testing.T) {
-	input := "before <pre><code>code</code></pre> after"
-	regions := findCodeFences(input)
+	t.Run("ASCII positions", func(t *testing.T) {
+		// Intentionally ASCII-only: byte offsets == rune offsets, so strings.Index
+		// can be used to compute expected positions.
+		input := "before <pre><code>code</code></pre> after"
+		regions := findCodeFences(input)
 
-	if len(regions) != 1 {
-		t.Fatalf("expected 1 region, got %d", len(regions))
-	}
+		if len(regions) != 1 {
+			t.Fatalf("expected 1 region, got %d", len(regions))
+		}
 
-	expectedStart := strings.Index(input, "<pre><code>")
-	expectedEnd := strings.Index(input, "</code></pre>") + len("</code></pre>")
+		expectedStart := strings.Index(input, "<pre><code>")
+		expectedEnd := strings.Index(input, "</code></pre>") + len("</code></pre>")
 
-	if regions[0].start != expectedStart {
-		t.Errorf("start: got %d, want %d", regions[0].start, expectedStart)
-	}
-	if regions[0].end != expectedEnd {
-		t.Errorf("end: got %d, want %d", regions[0].end, expectedEnd)
-	}
+		if regions[0].start != expectedStart {
+			t.Errorf("start: got %d, want %d", regions[0].start, expectedStart)
+		}
+		if regions[0].end != expectedEnd {
+			t.Errorf("end: got %d, want %d", regions[0].end, expectedEnd)
+		}
+		if regions[0].openTag != "<pre><code>" {
+			t.Errorf("openTag: got %q, want %q", regions[0].openTag, "<pre><code>")
+		}
+	})
+
+	t.Run("multi-byte positions", func(t *testing.T) {
+		// "🎉x" = 2 runes but 5 bytes. Verify positions are rune-based.
+		input := "🎉x<pre><code>y</code></pre>"
+		regions := findCodeFences(input)
+
+		if len(regions) != 1 {
+			t.Fatalf("expected 1 region, got %d", len(regions))
+		}
+
+		// "🎉x" = 2 runes, so start is 2.
+		if regions[0].start != 2 {
+			t.Errorf("start: got %d, want 2 (rune position)", regions[0].start)
+		}
+
+		// 2 + 11 (<pre><code>) + 1 (y) + 13 (</code></pre>) = 27
+		wantEnd := 2 + len("<pre><code>") + 1 + len("</code></pre>")
+		if regions[0].end != wantEnd {
+			t.Errorf("end: got %d, want %d (rune position)", regions[0].end, wantEnd)
+		}
+	})
 }
 
 func TestIsInCodeFence(t *testing.T) {
+	// Intentionally ASCII-only: byte offsets == rune offsets.
 	input := "before <pre><code>code here</code></pre> after"
 	regions := findCodeFences(input)
 
@@ -279,4 +308,152 @@ func TestSplitMessageDefaultMaxLen(t *testing.T) {
 			t.Errorf("chunk %d exceeds FormattedMaxLen: %d > %d", i, len(chunk), FormattedMaxLen)
 		}
 	}
+}
+
+func TestRuneIndex(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		sub   string
+		start int
+		want  int
+	}{
+		{
+			name:  "ASCII simple",
+			text:  "hello world",
+			sub:   "world",
+			start: 0,
+			want:  6,
+		},
+		{
+			name:  "emoji before target",
+			text:  "🎉🎉hello",
+			sub:   "hello",
+			start: 0,
+			want:  2, // two emoji runes, then "hello" starts at rune 2
+		},
+		{
+			name:  "not found",
+			text:  "hello world",
+			sub:   "xyz",
+			start: 0,
+			want:  -1,
+		},
+		{
+			name:  "search from offset",
+			text:  "abcabc",
+			sub:   "abc",
+			start: 1,
+			want:  3,
+		},
+		{
+			name:  "search from offset with multibyte",
+			text:  "日本語abc日本語abc",
+			sub:   "abc",
+			start: 4,
+			want:  9, // skip first "abc" at rune 3, runes[4:] = "bc日本語abc", "abc" at rune offset 5 from start 4 = 9
+		},
+		{
+			name:  "start beyond length",
+			text:  "short",
+			sub:   "s",
+			start: 100,
+			want:  -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runeIndex(tt.text, tt.sub, tt.start)
+			if got != tt.want {
+				t.Errorf("runeIndex(%q, %q, %d) = %d, want %d", tt.text, tt.sub, tt.start, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindCodeFencesUnicode(t *testing.T) {
+	t.Run("emoji before code fence", func(t *testing.T) {
+		// Each emoji is 1 rune. "🎉🎉🎉" = 3 runes.
+		input := "🎉🎉🎉<pre><code>code</code></pre>"
+		regions := findCodeFences(input)
+
+		if len(regions) != 1 {
+			t.Fatalf("expected 1 region, got %d", len(regions))
+		}
+
+		// Opening tag starts at rune 3 (after 3 emoji).
+		if regions[0].start != 3 {
+			t.Errorf("start: got %d, want 3", regions[0].start)
+		}
+
+		// <pre><code> = 11 runes, "code" = 4 runes, </code></pre> = 13 runes
+		// end = 3 + 11 + 4 + 13 = 31
+		wantEnd := 3 + len("<pre><code>") + len("code") + len("</code></pre>")
+		if regions[0].end != wantEnd {
+			t.Errorf("end: got %d, want %d", regions[0].end, wantEnd)
+		}
+
+		if regions[0].openTag != "<pre><code>" {
+			t.Errorf("openTag: got %q, want %q", regions[0].openTag, "<pre><code>")
+		}
+	})
+
+	t.Run("CJK before and inside fence", func(t *testing.T) {
+		// "日本" = 2 runes
+		input := `日本<pre><code>中文</code></pre>`
+		regions := findCodeFences(input)
+
+		if len(regions) != 1 {
+			t.Fatalf("expected 1 region, got %d", len(regions))
+		}
+
+		if regions[0].start != 2 {
+			t.Errorf("start: got %d, want 2", regions[0].start)
+		}
+
+		// 2 + 11 (<pre><code>) + 2 (中文) + 13 (</code></pre>) = 28
+		wantEnd := 2 + len("<pre><code>") + 2 + len("</code></pre>")
+		if regions[0].end != wantEnd {
+			t.Errorf("end: got %d, want %d", regions[0].end, wantEnd)
+		}
+	})
+
+	t.Run("code fence with class attribute", func(t *testing.T) {
+		input := `text <pre><code class="language-go">func main()</code></pre> end`
+		regions := findCodeFences(input)
+
+		if len(regions) != 1 {
+			t.Fatalf("expected 1 region, got %d", len(regions))
+		}
+
+		wantOpenTag := `<pre><code class="language-go">`
+		if regions[0].openTag != wantOpenTag {
+			t.Errorf("openTag: got %q, want %q", regions[0].openTag, wantOpenTag)
+		}
+
+		// start at rune 5 ("text " = 5 runes)
+		if regions[0].start != 5 {
+			t.Errorf("start: got %d, want 5", regions[0].start)
+		}
+	})
+
+	t.Run("emoji before fence with class attribute", func(t *testing.T) {
+		input := `🎉<pre><code class="language-go">code</code></pre>`
+		regions := findCodeFences(input)
+
+		if len(regions) != 1 {
+			t.Fatalf("expected 1 region, got %d", len(regions))
+		}
+
+		// Emoji is 1 rune, fence starts at rune 1.
+		if regions[0].start != 1 {
+			t.Errorf("start: got %d, want 1", regions[0].start)
+		}
+
+		wantOpenTag := `<pre><code class="language-go">`
+		if regions[0].openTag != wantOpenTag {
+			t.Errorf("openTag: got %q, want %q", regions[0].openTag, wantOpenTag)
+		}
+	})
 }

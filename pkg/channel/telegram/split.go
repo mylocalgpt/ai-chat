@@ -8,37 +8,65 @@ import (
 const FormattedMaxLen = 4000
 
 const fenceCloseTag = "</code></pre>"
-const fenceOpenTag = "<pre><code>"
 
 type fenceRegion struct {
-	start int
-	end   int
+	start   int
+	end     int
+	openTag string // e.g. `<pre><code class="language-go">`
+}
+
+// runeIndex returns the rune position of substr in text, starting search at rune position start.
+// Returns -1 if not found.
+func runeIndex(text, substr string, start int) int {
+	runes := []rune(text)
+	if start >= len(runes) {
+		return -1
+	}
+	remaining := string(runes[start:])
+	byteIdx := strings.Index(remaining, substr)
+	if byteIdx == -1 {
+		return -1
+	}
+	return start + utf8.RuneCountInString(remaining[:byteIdx])
 }
 
 func findCodeFences(text string) []fenceRegion {
 	var regions []fenceRegion
-	preOpen := "<pre><code>"
+	preOpenPrefix := "<pre><code"
 	preClose := "</code></pre>"
 
 	pos := 0
-	for pos < len(text) {
-		openIdx := strings.Index(text[pos:], preOpen)
+	runeLen := utf8.RuneCountInString(text)
+	for pos < runeLen {
+		// Find the opening tag prefix (may have class attribute).
+		openIdx := runeIndex(text, preOpenPrefix, pos)
 		if openIdx == -1 {
 			break
 		}
-		openIdx += pos
 
-		closeIdx := strings.Index(text[openIdx+len(preOpen):], preClose)
+		// Find the closing ">" of the opening tag.
+		closeBracket := runeIndex(text, ">", openIdx+utf8.RuneCountInString(preOpenPrefix))
+		if closeBracket == -1 {
+			break
+		}
+
+		// Capture the full opening tag, e.g. `<pre><code>` or `<pre><code class="language-go">`.
+		runes := []rune(text)
+		fullOpenTag := string(runes[openIdx : closeBracket+1])
+
+		// Find the closing </code></pre> tag.
+		closeIdx := runeIndex(text, preClose, closeBracket+1)
 		if closeIdx == -1 {
 			break
 		}
-		closeIdx += openIdx + len(preOpen)
 
+		endPos := closeIdx + utf8.RuneCountInString(preClose)
 		regions = append(regions, fenceRegion{
-			start: openIdx,
-			end:   closeIdx + len(preClose),
+			start:   openIdx,
+			end:     endPos,
+			openTag: fullOpenTag,
 		})
-		pos = closeIdx + len(preClose)
+		pos = endPos
 	}
 
 	return regions
@@ -51,6 +79,16 @@ func isInCodeFence(pos int, regions []fenceRegion) bool {
 		}
 	}
 	return false
+}
+
+// fenceAt returns the fence region containing pos, or nil if pos is outside all fences.
+func fenceAt(pos int, regions []fenceRegion) *fenceRegion {
+	for i := range regions {
+		if pos >= regions[i].start && pos < regions[i].end {
+			return &regions[i]
+		}
+	}
+	return nil
 }
 
 func SplitMessage(text string, maxLen int) []string {
@@ -81,7 +119,8 @@ func splitRecursive(text string, maxLen int, regions []fenceRegion) []string {
 		splitPoint = maxLen
 	}
 
-	inFence := isInCodeFence(splitPoint, regions)
+	fence := fenceAt(splitPoint, regions)
+	inFence := fence != nil
 
 	chunkEnd := splitPoint
 
@@ -96,7 +135,7 @@ func splitRecursive(text string, maxLen int, regions []fenceRegion) []string {
 		}
 
 		chunk := string(runes[:chunkEnd]) + fenceCloseTag
-		remainder := fenceOpenTag + string(runes[chunkEnd:])
+		remainder := fence.openTag + string(runes[chunkEnd:])
 
 		chunk = strings.TrimSpace(chunk)
 		if chunk != "" {
@@ -108,7 +147,7 @@ func splitRecursive(text string, maxLen int, regions []fenceRegion) []string {
 			chunks = append(chunks, chunk)
 		}
 
-		newRegions := adjustRegions(regions, chunkEnd, inFence)
+		newRegions := adjustRegions(regions, chunkEnd, fence)
 		subChunks := splitRecursive(remainder, maxLen, newRegions)
 		chunks = append(chunks, subChunks...)
 
@@ -123,7 +162,7 @@ func splitRecursive(text string, maxLen int, regions []fenceRegion) []string {
 		chunks = append(chunks, chunk)
 	}
 
-	newRegions := adjustRegions(regions, chunkEnd, false)
+	newRegions := adjustRegions(regions, chunkEnd, nil)
 	subChunks := splitRecursive(remainder, maxLen, newRegions)
 	chunks = append(chunks, subChunks...)
 
@@ -169,7 +208,7 @@ func findBestSplitPoint(runes []rune, maxLen int, regions []fenceRegion) int {
 	return 0
 }
 
-func adjustRegions(regions []fenceRegion, splitPoint int, inFence bool) []fenceRegion {
+func adjustRegions(regions []fenceRegion, splitPoint int, activeFence *fenceRegion) []fenceRegion {
 	var adjusted []fenceRegion
 
 	for _, r := range regions {
@@ -180,9 +219,10 @@ func adjustRegions(regions []fenceRegion, splitPoint int, inFence bool) []fenceR
 		newStart := r.start - splitPoint
 		newEnd := r.end - splitPoint
 
-		if inFence {
-			newStart += utf8.RuneCountInString(fenceOpenTag)
-			newEnd += utf8.RuneCountInString(fenceOpenTag)
+		if activeFence != nil {
+			openTagRunes := utf8.RuneCountInString(activeFence.openTag)
+			newStart += openTagRunes
+			newEnd += openTagRunes
 		}
 
 		if newStart < 0 {
@@ -190,8 +230,9 @@ func adjustRegions(regions []fenceRegion, splitPoint int, inFence bool) []fenceR
 		}
 
 		adjusted = append(adjusted, fenceRegion{
-			start: newStart,
-			end:   newEnd,
+			start:   newStart,
+			end:     newEnd,
+			openTag: r.openTag,
 		})
 	}
 
