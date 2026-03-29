@@ -17,6 +17,7 @@ import (
 )
 
 var _ core.Channel = (*TelegramAdapter)(nil)
+var _ core.StreamingChannel = (*TelegramAdapter)(nil)
 
 type telegramBot interface {
 	GetMe(ctx context.Context) (*models.User, error)
@@ -269,6 +270,103 @@ func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) er
 		}
 	}
 	return nil
+}
+
+// SendStreaming consumes a channel of agent events, showing real-time progress
+// via a ProgressReporter, accumulating response text, and sending the final
+// formatted message. It returns the final response text for persistence.
+func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, replyToID int, agentSessionID string, events <-chan core.AgentEvent) (string, error) {
+	reporter := NewProgressReporter(t.bot, chatID, replyToID, agentSessionID)
+
+	var textBuf strings.Builder
+	started := false
+	done := false
+	errored := false
+
+	for event := range events {
+		if done {
+			continue // drain remaining events after idle/error
+		}
+
+		// Check context cancellation before processing each event.
+		select {
+		case <-ctx.Done():
+			reporter.Finish(ctx)
+			return "", ctx.Err()
+		default:
+		}
+
+		switch event.Type {
+		case core.EventBusy:
+			started = true
+			if err := reporter.Start(ctx); err != nil {
+				slog.Error("progress reporter start failed", "chat_id", chatID, "error", err)
+			}
+
+		case core.EventTextDelta:
+			textBuf.WriteString(event.Text)
+			reporter.Update(ctx, event)
+
+		case core.EventText:
+			textBuf.Reset()
+			textBuf.WriteString(event.Text)
+
+		case core.EventToolUse:
+			reporter.Update(ctx, event)
+
+		case core.EventToolResult:
+			reporter.Update(ctx, event)
+
+		case core.EventStepFinish:
+			if event.Tokens != nil {
+				slog.Debug("step finished",
+					"chat_id", chatID,
+					"tokens_in", event.Tokens.Input,
+					"tokens_out", event.Tokens.Output,
+					"cost", event.Cost,
+				)
+			}
+
+		case core.EventIdle:
+			reporter.Finish(ctx)
+			done = true
+
+		case core.EventError:
+			reporter.Finish(ctx)
+			_ = t.Send(ctx, core.OutboundMessage{
+				Channel:     "telegram",
+				RecipientID: strconv.FormatInt(chatID, 10),
+				Content:     "Error: " + event.Text,
+				ReplyToID:   strconv.Itoa(replyToID),
+			})
+			done = true
+			errored = true
+		}
+	}
+
+	// Ensure reporter is cleaned up even if channel closed without idle/error.
+	if started && !done {
+		reporter.Finish(ctx)
+	}
+
+	// Error already communicated to user; return empty string.
+	if errored {
+		return "", nil
+	}
+
+	finalText := textBuf.String()
+	if finalText != "" {
+		if err := t.Send(ctx, core.OutboundMessage{
+			Channel:     "telegram",
+			RecipientID: strconv.FormatInt(chatID, 10),
+			Content:     finalText,
+			ReplyToID:   strconv.Itoa(replyToID),
+		}); err != nil {
+			return finalText, fmt.Errorf("sending final response: %w", err)
+		}
+	}
+
+	return finalText, nil
 }
 
 func (t *TelegramAdapter) renderResult(ctx context.Context, recipientID, replyToID string, result router.Result) error {
