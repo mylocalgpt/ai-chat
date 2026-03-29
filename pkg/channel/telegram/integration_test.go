@@ -1,11 +1,6 @@
 package telegram
 
-import (
-	"fmt"
-	"testing"
-
-	"github.com/mylocalgpt/ai-chat/pkg/core"
-)
+import "testing"
 
 func TestFormatHTMLIntegration(t *testing.T) {
 	tests := []struct {
@@ -78,59 +73,6 @@ func TestSplitMessageIntegration(t *testing.T) {
 
 	if !contains(combined, repeatChar('x', 100)) {
 		t.Error("code content was lost in splitting")
-	}
-}
-
-func TestWorkspaceKeyboardIntegration(t *testing.T) {
-	workspaces := []core.Workspace{
-		{ID: 1, Name: "lab", Path: "/path/to/lab"},
-		{ID: 2, Name: "ai-chat", Path: "/path/to/ai-chat"},
-		{ID: 3, Name: "docs", Path: "/path/to/docs"},
-	}
-
-	kb := WorkspaceKeyboard(workspaces, 0)
-
-	if len(kb.InlineKeyboard) != 3 {
-		t.Errorf("expected 3 rows, got %d", len(kb.InlineKeyboard))
-	}
-
-	for i, ws := range workspaces {
-		row := kb.InlineKeyboard[i]
-		if len(row) != 1 {
-			t.Errorf("row %d: expected 1 button, got %d", i, len(row))
-			continue
-		}
-		if row[0].Text != ws.Name {
-			t.Errorf("row %d: text = %q, want %q", i, row[0].Text, ws.Name)
-		}
-		expectedData := fmt.Sprintf("ws:%d", ws.ID)
-		if row[0].CallbackData != expectedData {
-			t.Errorf("row %d: callback = %q, want %q", i, row[0].CallbackData, expectedData)
-		}
-	}
-}
-
-func TestSessionKeyboardIntegration(t *testing.T) {
-	sessions := []SessionPreview{
-		{Name: "ai-chat-lab-a3f2", FirstUserMsg: "fix the bug", LastAgentMsg: "done", Status: "active", Age: "2h"},
-		{Name: "ai-chat-lab-k7x1", FirstUserMsg: "add feature", LastAgentMsg: "implemented", Status: "idle", Age: "1d"},
-	}
-
-	kb := SessionKeyboard(sessions)
-
-	if len(kb.InlineKeyboard) != 2 {
-		t.Errorf("expected 2 rows, got %d", len(kb.InlineKeyboard))
-	}
-
-	for i, sess := range sessions {
-		row := kb.InlineKeyboard[i]
-		if len(row) != 1 {
-			continue
-		}
-		expectedData := sess.Name
-		if row[0].CallbackData != expectedData {
-			t.Errorf("session %d: callback = %q, want %q", i, row[0].CallbackData, expectedData)
-		}
 	}
 }
 

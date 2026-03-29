@@ -12,12 +12,14 @@ import (
 )
 
 type callbackHandler struct {
-	router Router
+	router       Router
+	allowedUsers map[int64]bool
 }
 
-func newCallbackHandler(r Router) *callbackHandler {
+func newCallbackHandler(r Router, allowedUsers map[int64]bool) *callbackHandler {
 	return &callbackHandler{
-		router: r,
+		router:       r,
+		allowedUsers: allowedUsers,
 	}
 }
 
@@ -28,6 +30,15 @@ func (h *callbackHandler) handleCallback(ctx context.Context, b *bot.Bot, update
 
 	cb := update.CallbackQuery
 	data := cb.Data
+	if !h.allowedUsers[cb.From.ID] {
+		slog.Warn("unauthorized callback", "user_id", cb.From.ID)
+		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: cb.ID,
+			Text:            "Not authorized.",
+			ShowAlert:       true,
+		})
+		return
+	}
 
 	defer func() {
 		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
@@ -140,5 +151,10 @@ func (h *callbackHandler) renderCallbackResult(ctx context.Context, b *bot.Bot, 
 	if text == "" {
 		return
 	}
-	_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{ChatID: chatID, MessageID: messageID, Text: text})
+	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: messageID, Text: text}
+	if formatted := FormatHTML(text); formatted != text {
+		params.Text = formatted
+		params.ParseMode = models.ParseModeHTML
+	}
+	_, _ = b.EditMessageText(ctx, params)
 }

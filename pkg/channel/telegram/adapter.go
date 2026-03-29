@@ -38,8 +38,6 @@ type TelegramAdapter struct {
 	running      atomic.Bool
 
 	callbackHandler *callbackHandler
-
-	pendingSearch map[string]time.Time
 }
 
 func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAdapter, error) {
@@ -51,8 +49,7 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 	adapter := &TelegramAdapter{
 		allowedUsers:    allowed,
 		store:           st,
-		pendingSearch:   make(map[string]time.Time),
-		callbackHandler: newCallbackHandler(nil),
+		callbackHandler: newCallbackHandler(nil, allowed),
 	}
 
 	b, err := bot.New(cfg.BotToken, bot.WithDefaultHandler(adapter.handleUpdate))
@@ -214,6 +211,7 @@ func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) er
 	}
 	return nil
 }
+
 func (t *TelegramAdapter) renderResult(ctx context.Context, recipientID, replyToID string, result router.Result) error {
 	switch result.Kind {
 	case router.ResultNoReply:

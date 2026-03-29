@@ -155,11 +155,9 @@ func FormatHTML(text string) string {
 }
 
 func SendHTML(ctx context.Context, b *bot.Bot, chatID int64, text string, replyToID string) error {
-	htmlText := FormatHTML(text)
-
 	params := &bot.SendMessageParams{
 		ChatID:    chatID,
-		Text:      htmlText,
+		Text:      text,
 		ParseMode: models.ParseModeHTML,
 	}
 
@@ -175,7 +173,7 @@ func SendHTML(ctx context.Context, b *bot.Bot, chatID int64, text string, replyT
 	_, err := b.SendMessage(ctx, params)
 	if err != nil {
 		if errors.Is(err, bot.ErrorBadRequest) && strings.Contains(err.Error(), "can't parse entities") {
-			slog.Warn("HTML parse failed, retrying as plain text", "chat_id", chatID, "html_len", len(htmlText))
+			slog.Warn("HTML parse failed, retrying as plain text", "chat_id", chatID, "html_len", len(text))
 			params.ParseMode = ""
 			params.Text = text
 			_, retryErr := b.SendMessage(ctx, params)

@@ -4,162 +4,39 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mylocalgpt/ai-chat/pkg/core"
+	"github.com/mylocalgpt/ai-chat/pkg/router"
 )
 
-func TestWorkspaceKeyboard(t *testing.T) {
-	tests := []struct {
-		name         string
-		workspaces   []core.Workspace
-		limit        int
-		wantButtons  int
-		wantLastData string
-	}{
-		{
-			name:         "empty workspaces",
-			workspaces:   nil,
-			limit:        5,
-			wantButtons:  1,
-			wantLastData: "ws:none",
-		},
-		{
-			name: "single workspace",
-			workspaces: []core.Workspace{
-				{ID: 1, Name: "lab"},
-			},
-			limit:        5,
-			wantButtons:  1,
-			wantLastData: "ws:1",
-		},
-		{
-			name: "multiple workspaces",
-			workspaces: []core.Workspace{
-				{ID: 1, Name: "lab"},
-				{ID: 2, Name: "ai-chat"},
-				{ID: 3, Name: "docs"},
-			},
-			limit:        5,
-			wantButtons:  3,
-			wantLastData: "ws:3",
-		},
-		{
-			name: "limit applied",
-			workspaces: []core.Workspace{
-				{ID: 1, Name: "ws1"},
-				{ID: 2, Name: "ws2"},
-				{ID: 3, Name: "ws3"},
-				{ID: 4, Name: "ws4"},
-				{ID: 5, Name: "ws5"},
-				{ID: 6, Name: "ws6"},
-			},
-			limit:        3,
-			wantButtons:  3,
-			wantLastData: "ws:3",
-		},
+func TestWorkspacePickerKeyboard(t *testing.T) {
+	kb := WorkspacePickerKeyboard(&router.WorkspacePickerData{
+		Workspaces:        []router.WorkspaceOption{{ID: 1, Name: "lab"}, {ID: 2, Name: "docs"}},
+		ActiveWorkspaceID: 2,
+	})
+	if kb == nil || len(kb.InlineKeyboard) != 2 {
+		t.Fatalf("unexpected keyboard: %+v", kb)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			kb := WorkspaceKeyboard(tt.workspaces, tt.limit)
-			if kb == nil {
-				t.Fatal("keyboard is nil")
-			}
-
-			if len(kb.InlineKeyboard) != tt.wantButtons {
-				t.Errorf("got %d buttons, want %d", len(kb.InlineKeyboard), tt.wantButtons)
-			}
-
-			if len(kb.InlineKeyboard) > 0 {
-				lastRow := kb.InlineKeyboard[len(kb.InlineKeyboard)-1]
-				if len(lastRow) > 0 && lastRow[0].CallbackData != tt.wantLastData {
-					t.Errorf("last button data: got %q, want %q", lastRow[0].CallbackData, tt.wantLastData)
-				}
-			}
-		})
-	}
-}
-
-func TestWorkspaceKeyboardCallbackData(t *testing.T) {
-	workspaces := []core.Workspace{
-		{ID: 1, Name: "lab"},
-		{ID: 2, Name: "my workspace"},
-		{ID: 3, Name: "test/slash"},
-	}
-
-	kb := WorkspaceKeyboard(workspaces, 5)
-
 	if kb.InlineKeyboard[0][0].CallbackData != "ws:1" {
-		t.Errorf("first workspace callback: got %q, want %q", kb.InlineKeyboard[0][0].CallbackData, "ws:1")
+		t.Fatalf("unexpected callback: %q", kb.InlineKeyboard[0][0].CallbackData)
 	}
-
-	if kb.InlineKeyboard[1][0].CallbackData != "ws:2" {
-		t.Errorf("space in name: got %q, want %q", kb.InlineKeyboard[1][0].CallbackData, "ws:2")
-	}
-
-	if kb.InlineKeyboard[2][0].CallbackData != "ws:3" {
-		t.Errorf("slash in name: got %q, want %q", kb.InlineKeyboard[2][0].CallbackData, "ws:3")
+	if kb.InlineKeyboard[1][0].Text != "-> docs" {
+		t.Fatalf("unexpected active label: %q", kb.InlineKeyboard[1][0].Text)
 	}
 }
 
-func TestSessionKeyboard(t *testing.T) {
-	tests := []struct {
-		name        string
-		sessions    []SessionPreview
-		wantButtons int
-	}{
-		{
-			name:        "empty sessions",
-			sessions:    nil,
-			wantButtons: 0,
-		},
-		{
-			name: "single session",
-			sessions: []SessionPreview{
-				{Name: "ai-chat-lab-a3f2", FirstUserMsg: "hello", LastAgentMsg: "hi"},
-			},
-			wantButtons: 1,
-		},
-		{
-			name: "multiple sessions",
-			sessions: []SessionPreview{
-				{Name: "ai-chat-lab-a3f2", FirstUserMsg: "hello", LastAgentMsg: "hi"},
-				{Name: "ai-chat-lab-k7x1", FirstUserMsg: "test", LastAgentMsg: "ok"},
-			},
-			wantButtons: 2,
-		},
+func TestSessionPickerKeyboard(t *testing.T) {
+	kb := SessionPickerKeyboard(&router.SessionPickerData{
+		WorkspaceID:     7,
+		ActiveSessionID: 22,
+		Sessions:        []router.SessionOption{{ID: 11, Slug: "a1b2", Agent: "opencode", Status: "active"}, {ID: 22, Slug: "c3d4", Agent: "copilot", Status: "idle"}},
+	})
+	if kb == nil || len(kb.InlineKeyboard) != 2 {
+		t.Fatalf("unexpected keyboard: %+v", kb)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			kb := SessionKeyboard(tt.sessions)
-			if kb == nil {
-				t.Fatal("keyboard is nil")
-			}
-
-			if len(kb.InlineKeyboard) != tt.wantButtons {
-				t.Errorf("got %d buttons, want %d", len(kb.InlineKeyboard), tt.wantButtons)
-			}
-
-		})
+	if kb.InlineKeyboard[0][0].CallbackData != "sess:7:11" {
+		t.Fatalf("unexpected callback: %q", kb.InlineKeyboard[0][0].CallbackData)
 	}
-}
-
-func TestSessionKeyboardPreviewTruncation(t *testing.T) {
-	sessions := []SessionPreview{
-		{
-			Name:         "ai-chat-lab-a3f2",
-			FirstUserMsg: "this is a very long user message that should be truncated",
-			LastAgentMsg: "this is a very long agent response that should also be truncated",
-			Status:       "active",
-			Age:          "2h",
-		},
-	}
-
-	kb := SessionKeyboard(sessions)
-
-	buttonText := kb.InlineKeyboard[0][0].Text
-	if len(buttonText) > 64 {
-		t.Errorf("button text too long: %d chars, max 64", len(buttonText))
+	if kb.InlineKeyboard[1][0].Text[:2] != "->" {
+		t.Fatalf("expected active session label, got %q", kb.InlineKeyboard[1][0].Text)
 	}
 }
 
