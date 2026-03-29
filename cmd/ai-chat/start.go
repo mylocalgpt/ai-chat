@@ -16,6 +16,7 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
+	"github.com/mylocalgpt/ai-chat/pkg/lockfile"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
@@ -67,6 +68,15 @@ func runStart(args []string) {
 		slog.Error("failed to run migrations", "error", err)
 		os.Exit(1)
 	}
+
+	// Acquire exclusive polling lock to prevent concurrent Telegram pollers.
+	lockPath := filepath.Join(filepath.Dir(cfg.DBPath), "polling.lock")
+	lockCloser, err := lockfile.Lock(lockPath)
+	if err != nil {
+		slog.Error("failed to acquire polling lock", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = lockCloser.Close() }()
 
 	st := store.New(db)
 
