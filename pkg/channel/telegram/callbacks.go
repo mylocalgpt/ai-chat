@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ type pendingEntry struct {
 type callbackStore interface {
 	GetWorkspaceByID(ctx context.Context, id int64) (*core.Workspace, error)
 	GetWorkspaceByName(ctx context.Context, name string) (*core.Workspace, error)
+	SetActiveWorkspace(ctx context.Context, senderID, channel string, workspaceID int64) error
 }
 
 func newCallbackHandler(store callbackStore) *callbackHandler {
@@ -99,6 +101,28 @@ func (h *callbackHandler) handleWorkspaceCallback(ctx context.Context, b *bot.Bo
 	if err != nil {
 		slog.Warn("failed to decode workspace name", "data", data, "error", err)
 		decodedName = data
+	}
+
+	ws, err := h.store.GetWorkspaceByName(ctx, decodedName)
+	if err != nil {
+		slog.Error("failed to get workspace", "name", decodedName, "error", err)
+		_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:    chatID,
+			MessageID: messageID,
+			Text:      fmt.Sprintf("Workspace %q not found.", decodedName),
+		})
+		return
+	}
+
+	senderID := strconv.FormatInt(chatID, 10)
+	if err := h.store.SetActiveWorkspace(ctx, senderID, "telegram", ws.ID); err != nil {
+		slog.Error("failed to set active workspace", "workspace", decodedName, "error", err)
+		_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:    chatID,
+			MessageID: messageID,
+			Text:      fmt.Sprintf("Error switching to workspace: %s", err),
+		})
+		return
 	}
 
 	_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{

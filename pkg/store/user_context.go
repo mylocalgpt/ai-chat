@@ -54,13 +54,19 @@ func (s *Store) SetActiveWorkspace(ctx context.Context, senderID, channel string
 
 // SetActiveSession sets the active session for a sender/channel pair.
 func (s *Store) SetActiveSession(ctx context.Context, senderID, channel string, sessionID int64) error {
-	_, err := s.db.ExecContext(ctx,
+	sess, err := s.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("getting session for active session update: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO user_context (sender_id, channel, active_workspace_id, active_session_id, updated_at)
-		 VALUES (?, ?, 0, ?, datetime('now'))
+		 VALUES (?, ?, ?, ?, datetime('now'))
 		 ON CONFLICT(sender_id, channel) DO UPDATE SET 
+		   active_workspace_id = excluded.active_workspace_id,
 		   active_session_id = excluded.active_session_id,
 		   updated_at = datetime('now')`,
-		senderID, channel, sessionID,
+		senderID, channel, sess.WorkspaceID, sessionID,
 	)
 	if err != nil {
 		return fmt.Errorf("setting active session: %w", err)

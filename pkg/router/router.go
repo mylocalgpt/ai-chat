@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -41,7 +42,14 @@ func (r *Router) Route(ctx context.Context, msg core.InboundMessage) (string, er
 	cmd, ok := Parse(msg.Content)
 	if !ok {
 		if r.sessionMgr != nil {
-			return "", r.sessionMgr.Send(ctx, msg.SenderID, msg.Channel, msg.Content)
+			err := r.sessionMgr.Send(ctx, msg.SenderID, msg.Channel, msg.Content)
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					return "No active workspace. Use /workspaces to select one.", nil
+				}
+				return "", err
+			}
+			return "", nil
 		}
 		return "", nil
 	}
@@ -178,6 +186,9 @@ func (r *Router) handleClear(ctx context.Context, msg core.InboundMessage) (stri
 
 	info, err := r.sessionMgr.ClearSession(ctx, msg.SenderID, msg.Channel)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "No active workspace. Use /switch <name> first.", nil
+		}
 		return "", fmt.Errorf("clearing session: %w", err)
 	}
 
@@ -194,6 +205,9 @@ func (r *Router) handleKill(ctx context.Context, msg core.InboundMessage) (strin
 	}
 
 	if err := r.sessionMgr.KillSession(ctx, msg.SenderID, msg.Channel); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "No active workspace. Use /switch <name> first.", nil
+		}
 		return "", fmt.Errorf("killing session: %w", err)
 	}
 
@@ -215,6 +229,9 @@ func (r *Router) handleStatus(ctx context.Context, msg core.InboundMessage) (str
 
 	info, err := r.sessionMgr.GetStatus(ctx, msg.SenderID, msg.Channel)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "No workspace selected.", nil
+		}
 		return "", fmt.Errorf("getting status: %w", err)
 	}
 
@@ -260,6 +277,9 @@ func (r *Router) handleAgent(ctx context.Context, msg core.InboundMessage, args 
 
 	agent := args[0]
 	if err := r.sessionMgr.SetAgent(ctx, msg.SenderID, msg.Channel, agent); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "No active workspace. Use /switch <name> first.", nil
+		}
 		return "", fmt.Errorf("setting agent: %w", err)
 	}
 

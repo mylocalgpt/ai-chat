@@ -128,7 +128,30 @@ func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *
 	if t.router != nil {
 		response, err := t.router.Route(ctx, msg)
 		if err != nil {
-			slog.Error("router error", "error", err, "sender_id", msg.SenderID)
+			if strings.Contains(err.Error(), "user context") && strings.Contains(err.Error(), "not found") {
+				workspaces, listErr := t.store.ListWorkspaces(ctx)
+				if listErr != nil {
+					slog.Error("listing workspaces for new user", "error", listErr)
+					return
+				}
+				if len(workspaces) == 0 {
+					chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
+					_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
+						ChatID: chatID,
+						Text:   "No workspaces configured. Use the MCP tools to register a workspace first.",
+					})
+					return
+				}
+				kb := WorkspaceKeyboard(workspaces, 0)
+				chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
+				_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
+					ChatID:      chatID,
+					Text:        "Select a workspace to get started:",
+					ReplyMarkup: kb,
+				})
+				return
+			}
+			slog.Error("router failed", "channel", msg.Channel, "sender", msg.SenderID, "error", err)
 			return
 		}
 		if response != "" {

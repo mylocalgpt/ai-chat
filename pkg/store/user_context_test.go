@@ -77,3 +77,71 @@ func TestUserContextNotFound(t *testing.T) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
+
+func TestSetActiveSessionUsesSessionWorkspaceForNewContext(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	w, err := s.CreateWorkspace(ctx, "test-ws", "/tmp/ws", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+
+	sess, err := s.CreateSession(ctx, w.ID, "opencode", "slug1", "tmux-1")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	if err := s.SetActiveSession(ctx, "user1", "telegram", sess.ID); err != nil {
+		t.Fatalf("SetActiveSession: %v", err)
+	}
+
+	uc, err := s.GetUserContext(ctx, "user1", "telegram")
+	if err != nil {
+		t.Fatalf("GetUserContext: %v", err)
+	}
+	if uc.ActiveWorkspaceID != w.ID {
+		t.Fatalf("active_workspace_id = %d, want %d", uc.ActiveWorkspaceID, w.ID)
+	}
+	if uc.ActiveSessionID == nil || *uc.ActiveSessionID != sess.ID {
+		t.Fatalf("active_session_id = %v, want %d", uc.ActiveSessionID, sess.ID)
+	}
+}
+
+func TestSetActiveSessionUpdatesWorkspaceOnExistingContext(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	w1, err := s.CreateWorkspace(ctx, "ws-1", "/tmp/ws1", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace 1: %v", err)
+	}
+	w2, err := s.CreateWorkspace(ctx, "ws-2", "/tmp/ws2", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace 2: %v", err)
+	}
+
+	if err := s.SetActiveWorkspace(ctx, "user1", "telegram", w1.ID); err != nil {
+		t.Fatalf("SetActiveWorkspace: %v", err)
+	}
+
+	sess, err := s.CreateSession(ctx, w2.ID, "opencode", "slug2", "tmux-2")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	if err := s.SetActiveSession(ctx, "user1", "telegram", sess.ID); err != nil {
+		t.Fatalf("SetActiveSession: %v", err)
+	}
+
+	uc, err := s.GetUserContext(ctx, "user1", "telegram")
+	if err != nil {
+		t.Fatalf("GetUserContext: %v", err)
+	}
+	if uc.ActiveWorkspaceID != w2.ID {
+		t.Fatalf("active_workspace_id = %d, want %d", uc.ActiveWorkspaceID, w2.ID)
+	}
+	if uc.ActiveSessionID == nil || *uc.ActiveSessionID != sess.ID {
+		t.Fatalf("active_session_id = %v, want %d", uc.ActiveSessionID, sess.ID)
+	}
+}
