@@ -3,8 +3,27 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
+
+func TestAcceptanceAllowedUsers(t *testing.T) {
+	t.Run("appends explicit acceptance chat", func(t *testing.T) {
+		got := acceptanceAllowedUsers([]int64{111, 222}, 999)
+		want := []int64{111, 222, 999}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("acceptanceAllowedUsers() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("keeps existing acceptance chat without duplication", func(t *testing.T) {
+		got := acceptanceAllowedUsers([]int64{111, 999, 222}, 999)
+		want := []int64{111, 999, 222}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("acceptanceAllowedUsers() = %v, want %v", got, want)
+		}
+	})
+}
 
 func TestResolveAcceptanceTargetRepoFindsGitRoot(t *testing.T) {
 	repo := t.TempDir()

@@ -66,7 +66,7 @@ func runTelegramAcceptance(configPath string) error {
 
 	adapter, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
 		BotToken:     botToken,
-		AllowedUsers: cfg.Telegram.AllowedUsers,
+		AllowedUsers: acceptanceAllowedUsers(cfg.Telegram.AllowedUsers, chatID),
 	}, st)
 	if err != nil {
 		return fmt.Errorf("creating telegram adapter: %w", err)
@@ -131,6 +131,19 @@ func runTelegramAcceptance(configPath string) error {
 	}
 
 	return nil
+}
+
+func acceptanceAllowedUsers(allowedUsers []int64, chatID int64) []int64 {
+	for _, allowedUser := range allowedUsers {
+		if allowedUser == chatID {
+			return append([]int64(nil), allowedUsers...)
+		}
+	}
+
+	merged := make([]int64, 0, len(allowedUsers)+1)
+	merged = append(merged, allowedUsers...)
+	merged = append(merged, chatID)
+	return merged
 }
 
 func resolveAcceptanceTargetRepo() (string, error) {
