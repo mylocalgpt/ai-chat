@@ -15,7 +15,7 @@ func TestFormatHTMLIntegration(t *testing.T) {
 				"<b>Summary</b>",
 				"<b>Fixed</b>",
 				"<code>processData()</code>",
-				"<pre><code>",
+				`<pre><code class="language-go">`,
 				"<a href=\"https://example.com\">docs</a>",
 			},
 		},
@@ -30,8 +30,8 @@ func TestFormatHTMLIntegration(t *testing.T) {
 			name:  "multiple code blocks",
 			input: "First:\n```go\ncode1\n```\n\nSecond:\n```python\ncode2\n```",
 			contains: []string{
-				"<pre><code>code1\n</code></pre>",
-				"<pre><code>code2\n</code></pre>",
+				`<pre><code class="language-go">code1` + "\n</code></pre>",
+				`<pre><code class="language-python">code2` + "\n</code></pre>",
 			},
 		},
 	}

@@ -577,8 +577,8 @@ func TestFormatting(t T, h *TestHarness) {
 	t.Run("code_fence_conversion", func(t T) {
 		input := "```python\nprint('hello')\n```"
 		output := telegram.FormatHTML(input)
-		if !strings.Contains(output, "<pre><code>") {
-			t.Errorf("expected pre/code tags, got %q", output)
+		if !strings.Contains(output, `<pre><code class="language-python">`) {
+			t.Errorf("expected pre/code tags with language, got %q", output)
 		}
 		if !strings.Contains(output, "print('hello')") {
 			t.Errorf("expected code content, got %q", output)

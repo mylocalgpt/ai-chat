@@ -204,7 +204,7 @@ func TestRestoreCodeBlocks(t *testing.T) {
 			name:   "fenced code block",
 			text:   placeholderPrefix + "0\x00",
 			blocks: []codeBlock{{content: "fmt.Println()", language: "go", isInline: false}},
-			want:   "<pre><code>fmt.Println()</code></pre>",
+			want:   `<pre><code class="language-go">fmt.Println()</code></pre>`,
 		},
 		{
 			name:   "code with HTML chars",
@@ -248,7 +248,7 @@ func TestFormatHTML(t *testing.T) {
 		{
 			name:     "code block preserved",
 			input:    "```go\nfmt.Println()\n```",
-			contains: "<pre><code>",
+			contains: `<pre><code class="language-go">`,
 		},
 		{
 			name:     "inline code preserved",
@@ -306,7 +306,7 @@ func TestFormatHTMLFullPipeline(t *testing.T) {
 	if !strings.Contains(result, "<b>processData</b>") {
 		t.Error("bold not converted")
 	}
-	if !strings.Contains(result, "<pre><code>") {
+	if !strings.Contains(result, `<pre><code class="language-go">`) {
 		t.Error("code block not wrapped")
 	}
 	if !strings.Contains(result, "<a href=\"https://example.com\">documentation</a>") {
@@ -354,8 +354,109 @@ func TestFormatHTMLMultipleCodeBlocks(t *testing.T) {
 	input := "First block:\n```go\ncode1\n```\n\nSecond block:\n```python\ncode2\n```"
 	result := FormatHTML(input)
 
-	count := strings.Count(result, "<pre><code>")
+	count := strings.Count(result, `<pre><code class="language-`)
 	if count != 2 {
 		t.Errorf("expected 2 code blocks, got %d", count)
+	}
+}
+
+func TestFormatHTMLStrikethrough(t *testing.T) {
+	input := "this is ~~deleted~~ text"
+	result := FormatHTML(input)
+
+	if !strings.Contains(result, "<s>deleted</s>") {
+		t.Errorf("strikethrough not converted, got %q", result)
+	}
+}
+
+func TestRestoreCodeBlocksLanguageAttribute(t *testing.T) {
+	t.Run("with language", func(t *testing.T) {
+		text := placeholderPrefix + "0\x00"
+		blocks := []codeBlock{{content: "x = 1", language: "python", isInline: false}}
+		result := restoreCodeBlocks(text, blocks)
+		want := `<pre><code class="language-python">x = 1</code></pre>`
+		if result != want {
+			t.Errorf("got %q, want %q", result, want)
+		}
+	})
+
+	t.Run("without language", func(t *testing.T) {
+		text := placeholderPrefix + "0\x00"
+		blocks := []codeBlock{{content: "plain code", language: "", isInline: false}}
+		result := restoreCodeBlocks(text, blocks)
+		want := "<pre><code>plain code</code></pre>"
+		if result != want {
+			t.Errorf("got %q, want %q", result, want)
+		}
+		if strings.Contains(result, "class=") {
+			t.Error("code block without language should not have class attribute")
+		}
+	})
+}
+
+func TestRestoreCodeBlocksTruncation(t *testing.T) {
+	longContent := strings.Repeat("a", MaxCodeBlockLen+100)
+	text := placeholderPrefix + "0\x00"
+	blocks := []codeBlock{{content: longContent, language: "", isInline: false}}
+	result := restoreCodeBlocks(text, blocks)
+
+	if !strings.Contains(result, "... [truncated]") {
+		t.Error("long code block should contain truncation marker")
+	}
+	// The escaped content inside <pre><code>...</code></pre> should be at most
+	// MaxCodeBlockLen + len("\n... [truncated]")
+	if strings.Contains(result, strings.Repeat("a", MaxCodeBlockLen+1)) {
+		t.Error("code block content should be truncated")
+	}
+}
+
+func TestFormatHTMLThinkingMarkers(t *testing.T) {
+	input := "Before %%THINKING_START%%hidden reasoning%%THINKING_END%% after"
+	result := FormatHTML(input)
+
+	if !strings.Contains(result, "<tg-spoiler>") {
+		t.Errorf("thinking start marker not converted, got %q", result)
+	}
+	if !strings.Contains(result, "</tg-spoiler>") {
+		t.Errorf("thinking end marker not converted, got %q", result)
+	}
+	if strings.Contains(result, "%%THINKING_START%%") {
+		t.Error("raw thinking start marker should be removed")
+	}
+	if strings.Contains(result, "%%THINKING_END%%") {
+		t.Error("raw thinking end marker should be removed")
+	}
+}
+
+func TestWrapThinkingContent(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "no markers",
+			input: "plain text",
+			want:  "plain text",
+		},
+		{
+			name:  "both markers",
+			input: "%%THINKING_START%%thought%%THINKING_END%%",
+			want:  "<tg-spoiler>thought</tg-spoiler>",
+		},
+		{
+			name:  "multiple pairs",
+			input: "%%THINKING_START%%a%%THINKING_END%% then %%THINKING_START%%b%%THINKING_END%%",
+			want:  "<tg-spoiler>a</tg-spoiler> then <tg-spoiler>b</tg-spoiler>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := wrapThinkingContent(tt.input)
+			if result != tt.want {
+				t.Errorf("got %q, want %q", result, tt.want)
+			}
+		})
 	}
 }

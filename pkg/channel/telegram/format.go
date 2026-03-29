@@ -21,6 +21,11 @@ type codeBlock struct {
 
 const placeholderPrefix = "\x00CODEBLOCK"
 
+// MaxCodeBlockLen is the maximum length (in bytes) for a single code block's
+// escaped content. Blocks exceeding this limit are truncated. Exported so that
+// the message splitter (Part 3) can reference it.
+const MaxCodeBlockLen = 15000
+
 func extractCodeBlocks(text string) (string, []codeBlock) {
 	var blocks []codeBlock
 	result := text
@@ -78,6 +83,9 @@ func convertMarkdownToHTML(text string) string {
 	linkRegex := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	text = linkRegex.ReplaceAllString(text, `<a href="$2">$1</a>`)
 
+	strikethroughRegex := regexp.MustCompile(`~~(.+?)~~`)
+	text = strikethroughRegex.ReplaceAllString(text, "<s>$1</s>")
+
 	boldDoubleAsterisk := regexp.MustCompile(`\*\*(.+?)\*\*`)
 	for boldDoubleAsterisk.MatchString(text) {
 		text = boldDoubleAsterisk.ReplaceAllString(text, "<b>$1</b>")
@@ -114,14 +122,21 @@ func restoreCodeBlocks(text string, blocks []codeBlock) string {
 		if block.isInline {
 			text = strings.Replace(text, placeholder, "<code>"+escapedContent+"</code>", 1)
 		} else {
-			text = strings.Replace(text, placeholder, "<pre><code>"+escapedContent+"</code></pre>", 1)
+			if len(escapedContent) > MaxCodeBlockLen {
+				escapedContent = escapedContent[:MaxCodeBlockLen] + "\n... [truncated]"
+			}
+			if block.language != "" {
+				text = strings.Replace(text, placeholder, `<pre><code class="language-`+block.language+`">`+escapedContent+"</code></pre>", 1)
+			} else {
+				text = strings.Replace(text, placeholder, "<pre><code>"+escapedContent+"</code></pre>", 1)
+			}
 		}
 	}
 	return text
 }
 
 func validateHTML(text string) string {
-	openTags := []string{"b", "i", "u", "s", "code", "pre", "a", "blockquote"}
+	openTags := []string{"b", "i", "u", "s", "code", "pre", "a", "blockquote", "tg-spoiler"}
 	for _, tag := range openTags {
 		openCount := strings.Count(text, "<"+tag+">") + strings.Count(text, "<"+tag+" ")
 		closeCount := strings.Count(text, "</"+tag+">")
@@ -136,6 +151,15 @@ func validateHTML(text string) string {
 	return text
 }
 
+// wrapThinkingContent replaces thinking markers with tg-spoiler tags.
+// Callers (Part 4/5 streaming adapter) inject %%THINKING_START%% / %%THINKING_END%%
+// markers around reasoning content before calling FormatHTML().
+func wrapThinkingContent(text string) string {
+	text = strings.ReplaceAll(text, "%%THINKING_START%%", "<tg-spoiler>")
+	text = strings.ReplaceAll(text, "%%THINKING_END%%", "</tg-spoiler>")
+	return text
+}
+
 func FormatHTML(text string) string {
 	if text == "" {
 		return ""
@@ -144,6 +168,8 @@ func FormatHTML(text string) string {
 	text, blocks := extractCodeBlocks(text)
 
 	text = escapeHTML(text)
+
+	text = wrapThinkingContent(text)
 
 	text = convertMarkdownToHTML(text)
 
