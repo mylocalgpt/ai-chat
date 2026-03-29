@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
@@ -89,8 +90,8 @@ func TestWorkspaceKeyboardIntegration(t *testing.T) {
 
 	kb := WorkspaceKeyboard(workspaces, 0)
 
-	if len(kb.InlineKeyboard) != 4 {
-		t.Errorf("expected 4 rows (3 workspaces + search), got %d", len(kb.InlineKeyboard))
+	if len(kb.InlineKeyboard) != 3 {
+		t.Errorf("expected 3 rows, got %d", len(kb.InlineKeyboard))
 	}
 
 	for i, ws := range workspaces {
@@ -102,15 +103,10 @@ func TestWorkspaceKeyboardIntegration(t *testing.T) {
 		if row[0].Text != ws.Name {
 			t.Errorf("row %d: text = %q, want %q", i, row[0].Text, ws.Name)
 		}
-		expectedData := "ws:" + ws.Name
+		expectedData := fmt.Sprintf("ws:%d", ws.ID)
 		if row[0].CallbackData != expectedData {
 			t.Errorf("row %d: callback = %q, want %q", i, row[0].CallbackData, expectedData)
 		}
-	}
-
-	lastRow := kb.InlineKeyboard[3]
-	if lastRow[0].CallbackData != "ws:search" {
-		t.Errorf("last row callback = %q, want ws:search", lastRow[0].CallbackData)
 	}
 }
 
@@ -122,24 +118,16 @@ func TestSessionKeyboardIntegration(t *testing.T) {
 
 	kb := SessionKeyboard(sessions)
 
-	if len(kb.InlineKeyboard) != 4 {
-		t.Errorf("expected 4 rows (new + 2 sessions + back), got %d", len(kb.InlineKeyboard))
-	}
-
-	if kb.InlineKeyboard[0][0].CallbackData != "sess:new" {
-		t.Errorf("first row should be 'new session'")
-	}
-
-	if kb.InlineKeyboard[3][0].CallbackData != "sess:back" {
-		t.Errorf("last row should be 'back'")
+	if len(kb.InlineKeyboard) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(kb.InlineKeyboard))
 	}
 
 	for i, sess := range sessions {
-		row := kb.InlineKeyboard[i+1]
+		row := kb.InlineKeyboard[i]
 		if len(row) != 1 {
 			continue
 		}
-		expectedData := "sess:" + sess.Name
+		expectedData := sess.Name
 		if row[0].CallbackData != expectedData {
 			t.Errorf("session %d: callback = %q, want %q", i, row[0].CallbackData, expectedData)
 		}
@@ -163,15 +151,15 @@ func TestSecurityWarningKeyboardIntegration(t *testing.T) {
 	if row[0].Text != "Yes, send" {
 		t.Errorf("first button text = %q, want 'Yes, send'", row[0].Text)
 	}
-	if row[0].CallbackData != "sec:yes:"+msgRef {
-		t.Errorf("first button callback = %q, want 'sec:yes:%s'", row[0].CallbackData, msgRef)
+	if row[0].CallbackData != "sec:approve:"+msgRef {
+		t.Errorf("first button callback = %q, want 'sec:approve:%s'", row[0].CallbackData, msgRef)
 	}
 
 	if row[1].Text != "Cancel" {
 		t.Errorf("second button text = %q, want 'Cancel'", row[1].Text)
 	}
-	if row[1].CallbackData != "sec:no:"+msgRef {
-		t.Errorf("second button callback = %q, want 'sec:no:%s'", row[1].CallbackData, msgRef)
+	if row[1].CallbackData != "sec:reject:"+msgRef {
+		t.Errorf("second button callback = %q, want 'sec:reject:%s'", row[1].CallbackData, msgRef)
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 type SessionManager interface {
 	Send(ctx context.Context, senderID, channel, message string) error
 	CreateSession(ctx context.Context, workspaceID int64, agent string) (*core.SessionInfo, error)
+	CreateSessionForSender(ctx context.Context, senderID, channel, agent string) (*core.SessionInfo, error)
+	SwitchActiveSession(ctx context.Context, senderID, channel string, workspaceID, sessionID int64) error
 	ClearSession(ctx context.Context, senderID, channel string) (*core.SessionInfo, error)
 	KillSession(ctx context.Context, senderID, channel string) error
 	GetStatus(ctx context.Context, senderID, channel string) (*StatusInfo, error)
@@ -32,209 +34,212 @@ type Router struct {
 }
 
 func NewRouter(st *store.Store, sm SessionManager) *Router {
-	return &Router{
-		store:      st,
-		sessionMgr: sm,
-	}
+	return &Router{store: st, sessionMgr: sm}
 }
 
-func (r *Router) Route(ctx context.Context, msg core.InboundMessage) (string, error) {
-	cmd, ok := Parse(msg.Content)
+func (r *Router) Route(ctx context.Context, req Request) (Result, error) {
+	if req.Message == nil {
+		return NoReplyResult(), nil
+	}
+
+	cmd, ok := Parse(req.Message.Content)
 	if !ok {
 		if r.sessionMgr != nil {
-			err := r.sessionMgr.Send(ctx, msg.SenderID, msg.Channel, msg.Content)
+			err := r.sessionMgr.Send(ctx, req.Message.SenderID, req.Message.Channel, req.Message.Content)
 			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
-					return "No active workspace. Use /workspaces to select one.", nil
+					return r.workspacePickerResult(ctx, req.Message.SenderID, req.Message.Channel, "Select a workspace to get started:")
 				}
-				return "", err
+				return Result{}, err
 			}
-			return "", nil
+			return NoReplyResult(), nil
 		}
-		return "", nil
+		return NoReplyResult(), nil
 	}
 
 	switch cmd.Name {
 	case "workspaces":
-		return r.handleWorkspaces(ctx, msg)
+		return r.handleWorkspaces(ctx, req.Message)
 	case "sessions":
-		return r.handleSessions(ctx, msg)
+		return r.handleSessions(ctx, req.Message)
 	case "switch":
-		return r.handleSwitch(ctx, msg, cmd.Args)
+		return r.handleSwitch(ctx, req.Message, cmd.Args)
 	case "new":
-		return r.handleNew(ctx, msg)
+		return r.handleNew(ctx, req.Message)
 	case "clear":
-		return r.handleClear(ctx, msg)
+		return r.handleClear(ctx, req.Message)
 	case "kill":
-		return r.handleKill(ctx, msg)
+		return r.handleKill(ctx, req.Message)
 	case "status":
-		return r.handleStatus(ctx, msg)
+		return r.handleStatus(ctx, req.Message)
 	case "agent":
-		return r.handleAgent(ctx, msg, cmd.Args)
+		return r.handleAgent(ctx, req.Message, cmd.Args)
 	default:
-		return fmt.Sprintf("Unknown command: /%s. Try /status for help.", cmd.Name), nil
+		return TextResult(fmt.Sprintf("Unknown command: /%s. Try /status for help.", cmd.Name)), nil
 	}
 }
 
-func (r *Router) handleWorkspaces(ctx context.Context, msg core.InboundMessage) (string, error) {
-	workspaces, err := r.store.ListWorkspaces(ctx)
+func (r *Router) HandleWorkspaceSelection(ctx context.Context, senderID, channel string, workspaceID int64) (Result, error) {
+	ws, err := r.store.GetWorkspaceByID(ctx, workspaceID)
 	if err != nil {
-		return "", fmt.Errorf("listing workspaces: %w", err)
-	}
-
-	active, err := r.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
-	activeID := int64(0)
-	if err == nil {
-		activeID = active.WorkspaceID
-	}
-
-	if len(workspaces) == 0 {
-		return "No workspaces configured.", nil
-	}
-
-	var b strings.Builder
-	for i, w := range workspaces {
-		if i > 0 {
-			b.WriteString("\n")
+		if errors.Is(err, store.ErrNotFound) {
+			return TextResult("Workspace not found."), nil
 		}
-		if w.ID == activeID {
-			b.WriteString("→ ")
-		} else {
-			b.WriteString("  ")
-		}
-		b.WriteString(w.Name)
-		b.WriteString(": ")
-		b.WriteString(w.Path)
+		return Result{}, fmt.Errorf("getting workspace: %w", err)
 	}
-	return b.String(), nil
+	if err := r.store.SetActiveWorkspace(ctx, senderID, channel, ws.ID); err != nil {
+		return Result{}, fmt.Errorf("setting active workspace: %w", err)
+	}
+	return TextResult(fmt.Sprintf("Switched to workspace %s (%s)", ws.Name, ws.Path)), nil
 }
 
-func (r *Router) handleSessions(ctx context.Context, msg core.InboundMessage) (string, error) {
+func (r *Router) HandleSessionSelection(ctx context.Context, senderID, channel string, workspaceID, sessionID int64) (Result, error) {
+	if r.sessionMgr == nil {
+		return TextResult("Session manager not configured."), nil
+	}
+	if err := r.sessionMgr.SwitchActiveSession(ctx, senderID, channel, workspaceID, sessionID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return TextResult("That session is no longer available."), nil
+		}
+		return Result{}, fmt.Errorf("switching session: %w", err)
+	}
+	sess, err := r.store.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return Result{}, fmt.Errorf("getting session: %w", err)
+	}
+	return TextResult(fmt.Sprintf("Switched to session %s", sess.TmuxSession)), nil
+}
+
+func (r *Router) HandleSecurityDecision(_ context.Context, _, _, _ string, approved bool) (Result, error) {
+	if approved {
+		return TextResult("Security confirmation is not available yet."), nil
+	}
+	return TextResult("Cancelled."), nil
+}
+
+func (r *Router) handleWorkspaces(ctx context.Context, msg *core.InboundMessage) (Result, error) {
+	return r.workspacePickerResult(ctx, msg.SenderID, msg.Channel, "Select a workspace:")
+}
+
+func (r *Router) handleSessions(ctx context.Context, msg *core.InboundMessage) (Result, error) {
 	active, err := r.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
 	if err != nil {
-		return "No active workspace. Use /switch <name> first.", nil
+		return r.workspacePickerResult(ctx, msg.SenderID, msg.Channel, "Select a workspace to get started:")
 	}
-
+	ws, err := r.store.GetWorkspaceByID(ctx, active.WorkspaceID)
+	if err != nil {
+		return Result{}, fmt.Errorf("getting workspace: %w", err)
+	}
 	sessions, err := r.store.ListSessionsForWorkspace(ctx, active.WorkspaceID)
 	if err != nil {
-		return "", fmt.Errorf("listing sessions: %w", err)
+		return Result{}, fmt.Errorf("listing sessions: %w", err)
 	}
-
-	if len(sessions) == 0 {
-		return "No sessions in current workspace.", nil
+	activeSessionID := int64(0)
+	activeSession, err := r.store.GetActiveSessionForWorkspace(ctx, msg.SenderID, msg.Channel, active.WorkspaceID)
+	if err == nil && activeSession != nil {
+		activeSessionID = activeSession.SessionID
 	}
-
-	var b strings.Builder
-	for i, s := range sessions {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(s.Slug)
-		b.WriteString(" [")
-		b.WriteString(s.Agent)
-		b.WriteString("] ")
-		b.WriteString(s.Status)
+	options := make([]SessionOption, 0, len(sessions))
+	for _, sess := range sessions {
+		options = append(options, SessionOption{
+			ID:       sess.ID,
+			Name:     sess.TmuxSession,
+			Slug:     sess.Slug,
+			Agent:    sess.Agent,
+			Status:   sess.Status,
+			IsActive: sess.ID == activeSessionID,
+		})
 	}
-	return b.String(), nil
+	return Result{
+		Kind: ResultSessionPicker,
+		SessionPicker: &SessionPickerData{
+			WorkspaceID:     ws.ID,
+			WorkspaceName:   ws.Name,
+			Sessions:        options,
+			ActiveSessionID: activeSessionID,
+			Prompt:          "Select a session:",
+		},
+	}, nil
 }
 
-func (r *Router) handleSwitch(ctx context.Context, msg core.InboundMessage, args []string) (string, error) {
+func (r *Router) handleSwitch(ctx context.Context, msg *core.InboundMessage, args []string) (Result, error) {
 	if len(args) == 0 {
-		return "Usage: /switch <workspace>", nil
+		return TextResult("Usage: /switch <workspace>"), nil
 	}
-
 	name := args[0]
-
 	ws, err := r.store.GetWorkspace(ctx, name)
 	if err != nil {
 		ws, err = r.store.FindWorkspaceByAlias(ctx, name)
 		if err != nil {
-			return fmt.Sprintf("Workspace %q not found.", name), nil
+			return TextResult(fmt.Sprintf("Workspace %q not found.", name)), nil
 		}
 	}
-
-	if err := r.store.SetActiveWorkspace(ctx, msg.SenderID, msg.Channel, ws.ID); err != nil {
-		return "", fmt.Errorf("setting active workspace: %w", err)
-	}
-
-	return fmt.Sprintf("Switched to workspace %s (%s)", ws.Name, ws.Path), nil
+	return r.HandleWorkspaceSelection(ctx, msg.SenderID, msg.Channel, ws.ID)
 }
 
-func (r *Router) handleNew(ctx context.Context, msg core.InboundMessage) (string, error) {
+func (r *Router) handleNew(ctx context.Context, msg *core.InboundMessage) (Result, error) {
 	if r.sessionMgr == nil {
-		return "Session manager not configured.", nil
+		return TextResult("Session manager not configured."), nil
 	}
-
-	active, err := r.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
+	info, err := r.sessionMgr.CreateSessionForSender(ctx, msg.SenderID, msg.Channel, "")
 	if err != nil {
-		return "No active workspace. Use /switch <name> first.", nil
+		if errors.Is(err, store.ErrNotFound) {
+			return r.workspacePickerResult(ctx, msg.SenderID, msg.Channel, "Select a workspace to get started:")
+		}
+		return Result{}, fmt.Errorf("creating session: %w", err)
 	}
-
-	agent := "opencode"
-	info, err := r.sessionMgr.CreateSession(ctx, active.WorkspaceID, agent)
-	if err != nil {
-		return "", fmt.Errorf("creating session: %w", err)
-	}
-
-	return fmt.Sprintf("Created session %s in %s", info.Name, info.Workspace), nil
+	return TextResult(fmt.Sprintf("Created session %s in %s", info.Name, info.Workspace)), nil
 }
 
-func (r *Router) handleClear(ctx context.Context, msg core.InboundMessage) (string, error) {
+func (r *Router) handleClear(ctx context.Context, msg *core.InboundMessage) (Result, error) {
 	if r.sessionMgr == nil {
-		return "Session manager not configured.", nil
+		return TextResult("Session manager not configured."), nil
 	}
-
 	info, err := r.sessionMgr.ClearSession(ctx, msg.SenderID, msg.Channel)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return "No active workspace. Use /switch <name> first.", nil
+			return r.workspacePickerResult(ctx, msg.SenderID, msg.Channel, "Select a workspace to get started:")
 		}
-		return "", fmt.Errorf("clearing session: %w", err)
+		return Result{}, fmt.Errorf("clearing session: %w", err)
 	}
-
 	if info == nil {
-		return "No active session to clear.", nil
+		return TextResult("No active session to clear."), nil
 	}
-
-	return fmt.Sprintf("Cleared session %s", info.Name), nil
+	return TextResult(fmt.Sprintf("Cleared session %s", info.Name)), nil
 }
 
-func (r *Router) handleKill(ctx context.Context, msg core.InboundMessage) (string, error) {
+func (r *Router) handleKill(ctx context.Context, msg *core.InboundMessage) (Result, error) {
 	if r.sessionMgr == nil {
-		return "Session manager not configured.", nil
+		return TextResult("Session manager not configured."), nil
 	}
-
 	if err := r.sessionMgr.KillSession(ctx, msg.SenderID, msg.Channel); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return "No active workspace. Use /switch <name> first.", nil
+			return r.workspacePickerResult(ctx, msg.SenderID, msg.Channel, "Select a workspace to get started:")
 		}
-		return "", fmt.Errorf("killing session: %w", err)
+		return Result{}, fmt.Errorf("killing session: %w", err)
 	}
-
-	return "Session killed.", nil
+	return TextResult("Session killed."), nil
 }
 
-func (r *Router) handleStatus(ctx context.Context, msg core.InboundMessage) (string, error) {
+func (r *Router) handleStatus(ctx context.Context, msg *core.InboundMessage) (Result, error) {
 	if r.sessionMgr == nil {
 		active, err := r.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
 		if err != nil {
-			return "No workspace selected.", nil
+			return r.workspacePickerResult(ctx, msg.SenderID, msg.Channel, "Select a workspace to get started:")
 		}
 		ws, err := r.store.GetWorkspaceByID(ctx, active.WorkspaceID)
 		if err != nil {
-			return "No workspace selected.", nil
+			return r.workspacePickerResult(ctx, msg.SenderID, msg.Channel, "Select a workspace to get started:")
 		}
-		return fmt.Sprintf("Workspace: %s (%s)\nAgent: not configured", ws.Name, ws.Path), nil
+		return TextResult(fmt.Sprintf("Workspace: %s (%s)\nAgent: not configured", ws.Name, ws.Path)), nil
 	}
-
 	info, err := r.sessionMgr.GetStatus(ctx, msg.SenderID, msg.Channel)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return "No workspace selected.", nil
+			return r.workspacePickerResult(ctx, msg.SenderID, msg.Channel, "Select a workspace to get started:")
 		}
-		return "", fmt.Errorf("getting status: %w", err)
+		return Result{}, fmt.Errorf("getting status: %w", err)
 	}
-
 	var b strings.Builder
 	if info.Workspace != nil {
 		b.WriteString("Workspace: ")
@@ -245,7 +250,6 @@ func (r *Router) handleStatus(ctx context.Context, msg core.InboundMessage) (str
 	} else {
 		b.WriteString("Workspace: none\n")
 	}
-
 	b.WriteString("Agent: ")
 	if info.Agent != "" {
 		b.WriteString(info.Agent)
@@ -253,35 +257,56 @@ func (r *Router) handleStatus(ctx context.Context, msg core.InboundMessage) (str
 		b.WriteString("none")
 	}
 	b.WriteString("\n")
-
 	if info.ActiveSession != nil {
 		b.WriteString("Session: ")
 		b.WriteString(info.ActiveSession.Name)
 		b.WriteString("\n")
 	}
-
 	b.WriteString("Sessions: ")
 	fmt.Fprintf(&b, "%d", info.SessionCount)
-
-	return b.String(), nil
+	return TextResult(b.String()), nil
 }
 
-func (r *Router) handleAgent(ctx context.Context, msg core.InboundMessage, args []string) (string, error) {
+func (r *Router) handleAgent(ctx context.Context, msg *core.InboundMessage, args []string) (Result, error) {
 	if len(args) == 0 {
-		return "Usage: /agent <name>", nil
+		return TextResult("Usage: /agent <name>"), nil
 	}
-
 	if r.sessionMgr == nil {
-		return "Session manager not configured.", nil
+		return TextResult("Session manager not configured."), nil
 	}
-
 	agent := args[0]
 	if _, err := r.sessionMgr.SetAgent(ctx, msg.SenderID, msg.Channel, agent); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return "No active workspace. Use /switch <name> first.", nil
+			return r.workspacePickerResult(ctx, msg.SenderID, msg.Channel, "Select a workspace to get started:")
 		}
-		return "", fmt.Errorf("setting agent: %w", err)
+		return Result{}, fmt.Errorf("setting agent: %w", err)
 	}
+	return TextResult(fmt.Sprintf("Agent set to %s", agent)), nil
+}
 
-	return fmt.Sprintf("Agent set to %s", agent), nil
+func (r *Router) workspacePickerResult(ctx context.Context, senderID, channel, prompt string) (Result, error) {
+	workspaces, err := r.store.ListWorkspaces(ctx)
+	if err != nil {
+		return Result{}, fmt.Errorf("listing workspaces: %w", err)
+	}
+	activeID := int64(0)
+	active, err := r.store.GetActiveWorkspace(ctx, senderID, channel)
+	if err == nil && active != nil {
+		activeID = active.WorkspaceID
+	}
+	options := make([]WorkspaceOption, 0, len(workspaces))
+	for _, ws := range workspaces {
+		options = append(options, WorkspaceOption{ID: ws.ID, Name: ws.Name, Path: ws.Path})
+	}
+	if prompt == "" {
+		prompt = "Select a workspace:"
+	}
+	return Result{
+		Kind: ResultWorkspacePicker,
+		WorkspacePicker: &WorkspacePickerData{
+			Workspaces:        options,
+			ActiveWorkspaceID: activeID,
+			Prompt:            prompt,
+		},
+	}, nil
 }

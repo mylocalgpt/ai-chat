@@ -3,12 +3,12 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"time"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
+	"github.com/mylocalgpt/ai-chat/pkg/router"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
@@ -44,15 +44,10 @@ func WorkspaceKeyboard(workspaces []core.Workspace, limit int) *models.InlineKey
 
 	for i := 0; i < count; i++ {
 		ws := workspaces[i]
-		encodedName := url.QueryEscape(ws.Name)
 		rows = append(rows, []models.InlineKeyboardButton{
-			{Text: ws.Name, CallbackData: "ws:" + encodedName},
+			{Text: ws.Name, CallbackData: fmt.Sprintf("ws:%d", ws.ID)},
 		})
 	}
-
-	rows = append(rows, []models.InlineKeyboardButton{
-		{Text: "Search...", CallbackData: "ws:search"},
-	})
 
 	return &models.InlineKeyboardMarkup{
 		InlineKeyboard: rows,
@@ -62,21 +57,12 @@ func WorkspaceKeyboard(workspaces []core.Workspace, limit int) *models.InlineKey
 func SessionKeyboard(sessions []SessionPreview) *models.InlineKeyboardMarkup {
 	var rows [][]models.InlineKeyboardButton
 
-	rows = append(rows, []models.InlineKeyboardButton{
-		{Text: "New session", CallbackData: "sess:new"},
-	})
-
 	for _, sess := range sessions {
 		preview := formatSessionPreview(sess)
-		encodedName := url.QueryEscape(sess.Name)
 		rows = append(rows, []models.InlineKeyboardButton{
-			{Text: preview, CallbackData: "sess:" + encodedName},
+			{Text: preview, CallbackData: sess.Name},
 		})
 	}
-
-	rows = append(rows, []models.InlineKeyboardButton{
-		{Text: "Back", CallbackData: "sess:back"},
-	})
 
 	return &models.InlineKeyboardMarkup{
 		InlineKeyboard: rows,
@@ -113,11 +99,38 @@ func SecurityWarningKeyboard(msgRef string) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
-				{Text: "Yes, send", CallbackData: "sec:yes:" + msgRef},
-				{Text: "Cancel", CallbackData: "sec:no:" + msgRef},
+				{Text: "Yes, send", CallbackData: "sec:approve:" + msgRef},
+				{Text: "Cancel", CallbackData: "sec:reject:" + msgRef},
 			},
 		},
 	}
+}
+
+func WorkspacePickerKeyboard(data *router.WorkspacePickerData) *models.InlineKeyboardMarkup {
+	rows := make([][]models.InlineKeyboardButton, 0, len(data.Workspaces))
+	for _, ws := range data.Workspaces {
+		label := ws.Name
+		if ws.ID == data.ActiveWorkspaceID {
+			label = "-> " + label
+		}
+		rows = append(rows, []models.InlineKeyboardButton{{Text: label, CallbackData: fmt.Sprintf("ws:%d", ws.ID)}})
+	}
+	if len(rows) == 0 {
+		rows = append(rows, []models.InlineKeyboardButton{{Text: "No workspaces configured", CallbackData: "ws:none"}})
+	}
+	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+func SessionPickerKeyboard(data *router.SessionPickerData) *models.InlineKeyboardMarkup {
+	rows := make([][]models.InlineKeyboardButton, 0, len(data.Sessions))
+	for _, sess := range data.Sessions {
+		label := fmt.Sprintf("%s [%s] %s", sess.Slug, sess.Agent, sess.Status)
+		if sess.ID == data.ActiveSessionID {
+			label = "-> " + label
+		}
+		rows = append(rows, []models.InlineKeyboardButton{{Text: label, CallbackData: fmt.Sprintf("sess:%d:%d", data.WorkspaceID, sess.ID)}})
+	}
+	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
 func BuildSessionPreviews(ctx context.Context, st *store.Store, workspaceID int64, responseDir string) ([]SessionPreview, error) {

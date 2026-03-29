@@ -102,13 +102,13 @@ func (h *TestHarness) SendMessage(ctx context.Context, senderID, content string)
 		Channel:  "test",
 		Content:  content,
 	}
-	resp, err := h.Router.Route(ctx, msg)
+	result, err := h.Router.Route(ctx, router.Request{Message: &msg})
 	if err != nil {
 		return "", err
 	}
 
-	if resp != "" {
-		return resp, nil
+	if rendered := renderResultForTest(result); rendered != "" {
+		return rendered, nil
 	}
 
 	active, err := h.Store.GetActiveWorkspace(ctx, senderID, "test")
@@ -135,6 +135,36 @@ func (h *TestHarness) SendMessage(ctx context.Context, senderID, content string)
 	}
 
 	return content, nil
+}
+
+func renderResultForTest(result router.Result) string {
+	switch result.Kind {
+	case router.ResultText:
+		return result.Text
+	case router.ResultWorkspacePicker:
+		if result.WorkspacePicker == nil {
+			return ""
+		}
+		parts := []string{result.WorkspacePicker.Prompt}
+		for _, ws := range result.WorkspacePicker.Workspaces {
+			parts = append(parts, ws.Name)
+		}
+		return fmt.Sprint(parts)
+	case router.ResultSessionPicker:
+		if result.SessionPicker == nil {
+			return ""
+		}
+		parts := []string{result.SessionPicker.Prompt}
+		for _, sess := range result.SessionPicker.Sessions {
+			parts = append(parts, sess.Name)
+		}
+		return fmt.Sprint(parts)
+	case router.ResultSecurityConfirmation:
+		if result.SecurityConfirmation != nil {
+			return result.SecurityConfirmation.Summary
+		}
+	}
+	return ""
 }
 
 func (h *TestHarness) Cleanup() {

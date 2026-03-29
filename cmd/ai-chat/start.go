@@ -120,56 +120,8 @@ func runStart(args []string) {
 		os.Exit(1)
 	}
 
-	// Build message handler shared by all channels.
-	handleMessage := func(send func(context.Context, core.OutboundMessage) error) func(context.Context, core.InboundMessage) {
-		return func(ctx context.Context, msg core.InboundMessage) {
-			log := slog.With("channel", msg.Channel, "sender", msg.SenderID)
-
-			// Persist inbound message.
-			if err := st.CreateMessage(ctx, &core.Message{
-				Channel:   msg.Channel,
-				SenderID:  msg.SenderID,
-				Content:   msg.Content,
-				Direction: core.InboundDirection,
-				Status:    core.StatusDone,
-			}); err != nil {
-				log.Warn("failed to persist inbound message", "error", err)
-			}
-
-			response, err := cmdRouter.Route(ctx, msg)
-			if err != nil {
-				log.Error("router failed", "error", err)
-				_ = send(ctx, core.OutboundMessage{
-					Channel:     msg.Channel,
-					RecipientID: msg.SenderID,
-					Content:     "Something went wrong processing your message.",
-				})
-				return
-			}
-
-			if response != "" {
-				// Persist outbound message.
-				if err := st.CreateMessage(ctx, &core.Message{
-					Channel:   msg.Channel,
-					SenderID:  msg.SenderID,
-					Content:   response,
-					Direction: core.OutboundDirection,
-					Status:    core.StatusDone,
-				}); err != nil {
-					log.Warn("failed to persist outbound message", "error", err)
-				}
-				_ = send(ctx, core.OutboundMessage{
-					Channel:     msg.Channel,
-					RecipientID: msg.SenderID,
-					Content:     response,
-					ReplyToID:   msg.ID,
-				})
-			}
-		}
-	}
-
 	// Wire message handlers.
-	tg.SetMessageHandler(handleMessage(tg.Send))
+	tg.SetRouter(cmdRouter)
 
 	// Consume response events from session manager and send to Telegram.
 	go func() {

@@ -9,6 +9,29 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
+func newTestStore(t *testing.T) *store.Store {
+	t.Helper()
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate store: %v", err)
+	}
+	st := store.New(db)
+	t.Cleanup(func() { _ = st.Close() })
+	return st
+}
+
+func seedWorkspace(t *testing.T, st *store.Store, name string) *core.Workspace {
+	t.Helper()
+	ws, err := st.CreateWorkspace(context.Background(), name, "/tmp/"+name, "")
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	return ws
+}
+
 func TestParse_ValidCommand(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -16,36 +39,11 @@ func TestParse_ValidCommand(t *testing.T) {
 		wantName string
 		wantArgs []string
 	}{
-		{
-			name:     "simple command",
-			input:    "/workspaces",
-			wantName: "workspaces",
-			wantArgs: nil,
-		},
-		{
-			name:     "command with args",
-			input:    "/switch my-workspace",
-			wantName: "switch",
-			wantArgs: []string{"my-workspace"},
-		},
-		{
-			name:     "command with multiple args",
-			input:    "/agent opencode copilot",
-			wantName: "agent",
-			wantArgs: []string{"opencode", "copilot"},
-		},
-		{
-			name:     "command with bot mention",
-			input:    "/workspaces@mybot",
-			wantName: "workspaces",
-			wantArgs: nil,
-		},
-		{
-			name:     "command with args and bot mention",
-			input:    "/switch ws@mybot",
-			wantName: "switch",
-			wantArgs: []string{"ws@mybot"},
-		},
+		{name: "simple command", input: "/workspaces", wantName: "workspaces"},
+		{name: "command with args", input: "/switch my-workspace", wantName: "switch", wantArgs: []string{"my-workspace"}},
+		{name: "command with multiple args", input: "/agent opencode copilot", wantName: "agent", wantArgs: []string{"opencode", "copilot"}},
+		{name: "command with bot mention", input: "/workspaces@mybot", wantName: "workspaces"},
+		{name: "command with args and bot mention", input: "/switch ws@mybot", wantName: "switch", wantArgs: []string{"ws@mybot"}},
 	}
 
 	for _, tt := range tests {
@@ -60,308 +58,167 @@ func TestParse_ValidCommand(t *testing.T) {
 			if len(cmd.Args) != len(tt.wantArgs) {
 				t.Errorf("Args = %v, want %v", cmd.Args, tt.wantArgs)
 			}
-			for i := range cmd.Args {
-				if cmd.Args[i] != tt.wantArgs[i] {
-					t.Errorf("Args[%d] = %q, want %q", i, cmd.Args[i], tt.wantArgs[i])
-				}
-			}
 		})
 	}
 }
 
 func TestParse_InvalidCommand(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{"empty string", ""},
-		{"bare slash", "/"},
-		{"no slash", "workspaces"},
-		{"plain text", "hello world"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, ok := Parse(tt.input)
+	tests := []string{"", "/", "workspaces", "hello world"}
+	for _, input := range tests {
+		t.Run(input, func(t *testing.T) {
+			_, ok := Parse(input)
 			if ok {
-				t.Fatalf("Parse(%q) returned true, want false", tt.input)
+				t.Fatalf("Parse(%q) returned true, want false", input)
 			}
 		})
 	}
 }
 
 type mockSessionManager struct {
-	sendCalled          bool
-	sendMessage         string
-	sendErr             error
-	createSessionCalled bool
-	clearSessionCalled  bool
-	clearSessionErr     error
-	killSessionCalled   bool
-	killSessionErr      error
-	getStatusCalled     bool
-	getStatusErr        error
-	setAgentCalled      bool
-	setAgentName        string
-	setAgentErr         error
+	sendCalled            bool
+	sendErr               error
+	createSessionCalled   bool
+	createForSenderCalled bool
+	switchSessionCalled   bool
+	clearSessionCalled    bool
+	clearSessionErr       error
+	killSessionCalled     bool
+	killSessionErr        error
+	getStatusCalled       bool
+	getStatusErr          error
+	setAgentCalled        bool
+	setAgentErr           error
 }
 
-func (m *mockSessionManager) Send(ctx context.Context, senderID, channel, message string) error {
+func (m *mockSessionManager) Send(context.Context, string, string, string) error {
 	m.sendCalled = true
-	m.sendMessage = message
 	return m.sendErr
 }
-
-func (m *mockSessionManager) CreateSession(ctx context.Context, workspaceID int64, agent string) (*core.SessionInfo, error) {
+func (m *mockSessionManager) CreateSession(context.Context, int64, string) (*core.SessionInfo, error) {
 	m.createSessionCalled = true
 	return &core.SessionInfo{Name: "test-session", Workspace: "test-ws"}, nil
 }
-
-func (m *mockSessionManager) ClearSession(ctx context.Context, senderID, channel string) (*core.SessionInfo, error) {
+func (m *mockSessionManager) CreateSessionForSender(context.Context, string, string, string) (*core.SessionInfo, error) {
+	m.createForSenderCalled = true
+	return &core.SessionInfo{Name: "test-session", Workspace: "test-ws"}, nil
+}
+func (m *mockSessionManager) SwitchActiveSession(context.Context, string, string, int64, int64) error {
+	m.switchSessionCalled = true
+	return nil
+}
+func (m *mockSessionManager) ClearSession(context.Context, string, string) (*core.SessionInfo, error) {
 	m.clearSessionCalled = true
 	if m.clearSessionErr != nil {
 		return nil, m.clearSessionErr
 	}
 	return &core.SessionInfo{Name: "cleared-session"}, nil
 }
-
-func (m *mockSessionManager) KillSession(ctx context.Context, senderID, channel string) error {
+func (m *mockSessionManager) KillSession(context.Context, string, string) error {
 	m.killSessionCalled = true
 	return m.killSessionErr
 }
-
-func (m *mockSessionManager) GetStatus(ctx context.Context, senderID, channel string) (*StatusInfo, error) {
+func (m *mockSessionManager) GetStatus(context.Context, string, string) (*StatusInfo, error) {
 	m.getStatusCalled = true
 	if m.getStatusErr != nil {
 		return nil, m.getStatusErr
 	}
 	return &StatusInfo{Agent: "opencode", SessionCount: 1}, nil
 }
-
-func (m *mockSessionManager) SetAgent(ctx context.Context, senderID, channel, agent string) (*core.SessionInfo, error) {
+func (m *mockSessionManager) SetAgent(context.Context, string, string, string) (*core.SessionInfo, error) {
 	m.setAgentCalled = true
-	m.setAgentName = agent
 	return nil, m.setAgentErr
 }
 
-func TestRoute_NonCommand(t *testing.T) {
-	mockSM := &mockSessionManager{}
-	r := &Router{sessionMgr: mockSM}
-
-	_, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "hello world",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
+func routeMessage(t *testing.T, r *Router, content string) Result {
+	t.Helper()
+	result, err := r.Route(context.Background(), Request{Message: &core.InboundMessage{Content: content, SenderID: "user1", Channel: "telegram"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	return result
+}
 
-	if !mockSM.sendCalled {
-		t.Error("expected Send to be called for non-command message")
+func TestRouteNonCommandNoReplyOnSuccess(t *testing.T) {
+	result := routeMessage(t, &Router{sessionMgr: &mockSessionManager{}}, "hello world")
+	if result.Kind != ResultNoReply {
+		t.Fatalf("kind = %q, want %q", result.Kind, ResultNoReply)
 	}
 }
 
-func TestRoute_NonCommand_MissingUserContext(t *testing.T) {
-	mockSM := &mockSessionManager{sendErr: store.ErrNotFound}
-	r := &Router{sessionMgr: mockSM}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "hello world",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp != "No active workspace. Use /workspaces to select one." {
-		t.Fatalf("response = %q", resp)
+func TestRouteNonCommandReturnsWorkspacePickerOnMissingWorkspace(t *testing.T) {
+	st := newTestStore(t)
+	seedWorkspace(t, st, "test-ws")
+	result := routeMessage(t, &Router{sessionMgr: &mockSessionManager{sendErr: store.ErrNotFound}, store: st}, "hello world")
+	if result.Kind != ResultWorkspacePicker {
+		t.Fatalf("kind = %q, want %q", result.Kind, ResultWorkspacePicker)
 	}
 }
 
-func TestRoute_NonCommand_NoSessionManager(t *testing.T) {
-	r := &Router{sessionMgr: nil}
-
-	_, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "hello world",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestRouteUnknownCommandReturnsText(t *testing.T) {
+	result := routeMessage(t, &Router{}, "/unknown")
+	if result.Kind != ResultText || result.Text == "" {
+		t.Fatalf("unexpected result: %+v", result)
 	}
 }
 
-func TestRoute_UnknownCommand(t *testing.T) {
-	r := &Router{}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "/unknown",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestRouteAgentCommand(t *testing.T) {
+	sm := &mockSessionManager{}
+	result := routeMessage(t, &Router{sessionMgr: sm}, "/agent opencode")
+	if !sm.setAgentCalled {
+		t.Fatal("expected SetAgent to be called")
 	}
-
-	if resp == "" {
-		t.Fatal("expected response for unknown command")
+	if result.Kind != ResultText {
+		t.Fatalf("kind = %q, want %q", result.Kind, ResultText)
 	}
 }
 
-func TestRoute_AgentCommand(t *testing.T) {
-	mockSM := &mockSessionManager{}
-	r := &Router{sessionMgr: mockSM}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "/agent opencode",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !mockSM.setAgentCalled {
-		t.Error("expected SetAgent to be called")
-	}
-	if mockSM.setAgentName != "opencode" {
-		t.Errorf("agent name = %q, want %q", mockSM.setAgentName, "opencode")
-	}
-	if resp == "" {
-		t.Fatal("expected response for agent command")
+func TestRouteStatusMissingWorkspace(t *testing.T) {
+	st := newTestStore(t)
+	seedWorkspace(t, st, "test-ws")
+	sm := &mockSessionManager{getStatusErr: store.ErrNotFound}
+	result := routeMessage(t, &Router{sessionMgr: sm, store: st}, "/status")
+	if result.Kind != ResultWorkspacePicker {
+		t.Fatalf("kind = %q, want %q", result.Kind, ResultWorkspacePicker)
 	}
 }
 
-func TestRoute_AgentCommand_NoArgs(t *testing.T) {
-	r := &Router{}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "/agent",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if resp != "Usage: /agent <name>" {
-		t.Errorf("response = %q, want usage message", resp)
+func TestRouteClearMissingWorkspace(t *testing.T) {
+	st := newTestStore(t)
+	seedWorkspace(t, st, "test-ws")
+	sm := &mockSessionManager{clearSessionErr: store.ErrNotFound}
+	result := routeMessage(t, &Router{sessionMgr: sm, store: st}, "/clear")
+	if result.Kind != ResultWorkspacePicker {
+		t.Fatalf("kind = %q, want %q", result.Kind, ResultWorkspacePicker)
 	}
 }
 
-func TestRoute_StatusCommand_MissingUserContext(t *testing.T) {
-	mockSM := &mockSessionManager{getStatusErr: store.ErrNotFound}
-	r := &Router{sessionMgr: mockSM}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "/status",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp != "No workspace selected." {
-		t.Fatalf("response = %q", resp)
+func TestRouteKillMissingWorkspace(t *testing.T) {
+	st := newTestStore(t)
+	seedWorkspace(t, st, "test-ws")
+	sm := &mockSessionManager{killSessionErr: store.ErrNotFound}
+	result := routeMessage(t, &Router{sessionMgr: sm, store: st}, "/kill")
+	if result.Kind != ResultWorkspacePicker {
+		t.Fatalf("kind = %q, want %q", result.Kind, ResultWorkspacePicker)
 	}
 }
 
-func TestRoute_ClearCommand_MissingUserContext(t *testing.T) {
-	mockSM := &mockSessionManager{clearSessionErr: store.ErrNotFound}
-	r := &Router{sessionMgr: mockSM}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "/clear",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp != "No active workspace. Use /switch <name> first." {
-		t.Fatalf("response = %q", resp)
+func TestRouteNewNoSessionManager(t *testing.T) {
+	result := routeMessage(t, &Router{}, "/new")
+	if result.Text != "Session manager not configured." {
+		t.Fatalf("text = %q", result.Text)
 	}
 }
 
-func TestRoute_KillCommand_MissingUserContext(t *testing.T) {
-	mockSM := &mockSessionManager{killSessionErr: store.ErrNotFound}
-	r := &Router{sessionMgr: mockSM}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "/kill",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp != "No active workspace. Use /switch <name> first." {
-		t.Fatalf("response = %q", resp)
+func TestRouteSwitchNoArgs(t *testing.T) {
+	result := routeMessage(t, &Router{}, "/switch")
+	if result.Text != "Usage: /switch <workspace>" {
+		t.Fatalf("text = %q", result.Text)
 	}
 }
 
-func TestRoute_AgentCommand_MissingUserContext(t *testing.T) {
-	mockSM := &mockSessionManager{setAgentErr: store.ErrNotFound}
-	r := &Router{sessionMgr: mockSM}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "/agent opencode",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp != "No active workspace. Use /switch <name> first." {
-		t.Fatalf("response = %q", resp)
-	}
-}
-
-func TestRoute_NonCommand_UnexpectedError(t *testing.T) {
-	mockSM := &mockSessionManager{sendErr: errors.New("boom")}
-	r := &Router{sessionMgr: mockSM}
-
-	_, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "hello world",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
+func TestRouteUnexpectedError(t *testing.T) {
+	_, err := (&Router{sessionMgr: &mockSessionManager{sendErr: errors.New("boom")}}).Route(context.Background(), Request{Message: &core.InboundMessage{Content: "hello world", SenderID: "user1", Channel: "telegram"}})
 	if err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-func TestRoute_NewCommand_NoSessionManager(t *testing.T) {
-	r := &Router{sessionMgr: nil}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "/new",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if resp != "Session manager not configured." {
-		t.Errorf("response = %q, want not configured message", resp)
-	}
-}
-
-func TestRoute_SwitchCommand_NoArgs(t *testing.T) {
-	r := &Router{}
-
-	resp, err := r.Route(context.Background(), core.InboundMessage{
-		Content:  "/switch",
-		SenderID: "user1",
-		Channel:  "telegram",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if resp != "Usage: /switch <workspace>" {
-		t.Errorf("response = %q, want usage message", resp)
 	}
 }

@@ -25,36 +25,36 @@ func TestWorkspaceKeyboard(t *testing.T) {
 		{
 			name: "single workspace",
 			workspaces: []core.Workspace{
-				{Name: "lab"},
+				{ID: 1, Name: "lab"},
 			},
 			limit:        5,
-			wantButtons:  2,
-			wantLastData: "ws:search",
+			wantButtons:  1,
+			wantLastData: "ws:1",
 		},
 		{
 			name: "multiple workspaces",
 			workspaces: []core.Workspace{
-				{Name: "lab"},
-				{Name: "ai-chat"},
-				{Name: "docs"},
+				{ID: 1, Name: "lab"},
+				{ID: 2, Name: "ai-chat"},
+				{ID: 3, Name: "docs"},
 			},
 			limit:        5,
-			wantButtons:  4,
-			wantLastData: "ws:search",
+			wantButtons:  3,
+			wantLastData: "ws:3",
 		},
 		{
 			name: "limit applied",
 			workspaces: []core.Workspace{
-				{Name: "ws1"},
-				{Name: "ws2"},
-				{Name: "ws3"},
-				{Name: "ws4"},
-				{Name: "ws5"},
-				{Name: "ws6"},
+				{ID: 1, Name: "ws1"},
+				{ID: 2, Name: "ws2"},
+				{ID: 3, Name: "ws3"},
+				{ID: 4, Name: "ws4"},
+				{ID: 5, Name: "ws5"},
+				{ID: 6, Name: "ws6"},
 			},
 			limit:        3,
-			wantButtons:  4,
-			wantLastData: "ws:search",
+			wantButtons:  3,
+			wantLastData: "ws:3",
 		},
 	}
 
@@ -81,23 +81,23 @@ func TestWorkspaceKeyboard(t *testing.T) {
 
 func TestWorkspaceKeyboardCallbackData(t *testing.T) {
 	workspaces := []core.Workspace{
-		{Name: "lab"},
-		{Name: "my workspace"},
-		{Name: "test/slash"},
+		{ID: 1, Name: "lab"},
+		{ID: 2, Name: "my workspace"},
+		{ID: 3, Name: "test/slash"},
 	}
 
 	kb := WorkspaceKeyboard(workspaces, 5)
 
-	if kb.InlineKeyboard[0][0].CallbackData != "ws:lab" {
-		t.Errorf("first workspace callback: got %q, want %q", kb.InlineKeyboard[0][0].CallbackData, "ws:lab")
+	if kb.InlineKeyboard[0][0].CallbackData != "ws:1" {
+		t.Errorf("first workspace callback: got %q, want %q", kb.InlineKeyboard[0][0].CallbackData, "ws:1")
 	}
 
-	if kb.InlineKeyboard[1][0].CallbackData != "ws:my+workspace" {
-		t.Errorf("space in name: got %q, want %q", kb.InlineKeyboard[1][0].CallbackData, "ws:my+workspace")
+	if kb.InlineKeyboard[1][0].CallbackData != "ws:2" {
+		t.Errorf("space in name: got %q, want %q", kb.InlineKeyboard[1][0].CallbackData, "ws:2")
 	}
 
-	if kb.InlineKeyboard[2][0].CallbackData != "ws:test%2Fslash" {
-		t.Errorf("slash in name: got %q, want %q", kb.InlineKeyboard[2][0].CallbackData, "ws:test%2Fslash")
+	if kb.InlineKeyboard[2][0].CallbackData != "ws:3" {
+		t.Errorf("slash in name: got %q, want %q", kb.InlineKeyboard[2][0].CallbackData, "ws:3")
 	}
 }
 
@@ -110,14 +110,14 @@ func TestSessionKeyboard(t *testing.T) {
 		{
 			name:        "empty sessions",
 			sessions:    nil,
-			wantButtons: 2,
+			wantButtons: 0,
 		},
 		{
 			name: "single session",
 			sessions: []SessionPreview{
 				{Name: "ai-chat-lab-a3f2", FirstUserMsg: "hello", LastAgentMsg: "hi"},
 			},
-			wantButtons: 3,
+			wantButtons: 1,
 		},
 		{
 			name: "multiple sessions",
@@ -125,7 +125,7 @@ func TestSessionKeyboard(t *testing.T) {
 				{Name: "ai-chat-lab-a3f2", FirstUserMsg: "hello", LastAgentMsg: "hi"},
 				{Name: "ai-chat-lab-k7x1", FirstUserMsg: "test", LastAgentMsg: "ok"},
 			},
-			wantButtons: 4,
+			wantButtons: 2,
 		},
 	}
 
@@ -140,17 +140,6 @@ func TestSessionKeyboard(t *testing.T) {
 				t.Errorf("got %d buttons, want %d", len(kb.InlineKeyboard), tt.wantButtons)
 			}
 
-			if len(kb.InlineKeyboard) > 0 {
-				firstRow := kb.InlineKeyboard[0]
-				if len(firstRow) > 0 && firstRow[0].CallbackData != "sess:new" {
-					t.Errorf("first button should be 'new session', got %q", firstRow[0].CallbackData)
-				}
-
-				lastRow := kb.InlineKeyboard[len(kb.InlineKeyboard)-1]
-				if len(lastRow) > 0 && lastRow[0].CallbackData != "sess:back" {
-					t.Errorf("last button should be 'back', got %q", lastRow[0].CallbackData)
-				}
-			}
 		})
 	}
 }
@@ -168,7 +157,7 @@ func TestSessionKeyboardPreviewTruncation(t *testing.T) {
 
 	kb := SessionKeyboard(sessions)
 
-	buttonText := kb.InlineKeyboard[1][0].Text
+	buttonText := kb.InlineKeyboard[0][0].Text
 	if len(buttonText) > 64 {
 		t.Errorf("button text too long: %d chars, max 64", len(buttonText))
 	}
@@ -194,15 +183,15 @@ func TestSecurityWarningKeyboard(t *testing.T) {
 	if row[0].Text != "Yes, send" {
 		t.Errorf("first button text: got %q, want %q", row[0].Text, "Yes, send")
 	}
-	if row[0].CallbackData != "sec:yes:test-uuid-123" {
-		t.Errorf("first button data: got %q, want %q", row[0].CallbackData, "sec:yes:test-uuid-123")
+	if row[0].CallbackData != "sec:approve:test-uuid-123" {
+		t.Errorf("first button data: got %q, want %q", row[0].CallbackData, "sec:approve:test-uuid-123")
 	}
 
 	if row[1].Text != "Cancel" {
 		t.Errorf("second button text: got %q, want %q", row[1].Text, "Cancel")
 	}
-	if row[1].CallbackData != "sec:no:test-uuid-123" {
-		t.Errorf("second button data: got %q, want %q", row[1].CallbackData, "sec:no:test-uuid-123")
+	if row[1].CallbackData != "sec:reject:test-uuid-123" {
+		t.Errorf("second button data: got %q, want %q", row[1].CallbackData, "sec:reject:test-uuid-123")
 	}
 }
 

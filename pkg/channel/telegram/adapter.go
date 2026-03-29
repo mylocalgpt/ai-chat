@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,13 +12,17 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/mylocalgpt/ai-chat/pkg/core"
+	"github.com/mylocalgpt/ai-chat/pkg/router"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
 var _ core.Channel = (*TelegramAdapter)(nil)
 
 type Router interface {
-	Route(ctx context.Context, msg core.InboundMessage) (string, error)
+	Route(ctx context.Context, req router.Request) (router.Result, error)
+	HandleWorkspaceSelection(ctx context.Context, senderID, channel string, workspaceID int64) (router.Result, error)
+	HandleSessionSelection(ctx context.Context, senderID, channel string, workspaceID, sessionID int64) (router.Result, error)
+	HandleSecurityDecision(ctx context.Context, senderID, channel, token string, approved bool) (router.Result, error)
 }
 
 type SessionManager interface {
@@ -59,7 +62,7 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 		store:           st,
 		sessionToChat:   make(map[int64]string),
 		pendingSearch:   make(map[string]time.Time),
-		callbackHandler: newCallbackHandler(st),
+		callbackHandler: newCallbackHandler(nil),
 	}
 
 	b, err := bot.New(cfg.BotToken, bot.WithDefaultHandler(adapter.handleUpdate))
@@ -75,6 +78,7 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 
 func (t *TelegramAdapter) SetRouter(r Router) {
 	t.router = r
+	t.callbackHandler.router = r
 }
 
 func (t *TelegramAdapter) SetSessionManager(sm SessionManager) {
@@ -89,11 +93,26 @@ type messageHandlerRouter struct {
 	handler func(context.Context, core.InboundMessage)
 }
 
-func (r *messageHandlerRouter) Route(ctx context.Context, msg core.InboundMessage) (string, error) {
-	if r.handler != nil {
-		r.handler(ctx, msg)
+func (r *messageHandlerRouter) Route(ctx context.Context, req router.Request) (router.Result, error) {
+	if req.Message == nil {
+		return router.NoReplyResult(), nil
 	}
-	return "", nil
+	if r.handler != nil {
+		r.handler(ctx, *req.Message)
+	}
+	return router.NoReplyResult(), nil
+}
+
+func (r *messageHandlerRouter) HandleWorkspaceSelection(context.Context, string, string, int64) (router.Result, error) {
+	return router.NoReplyResult(), nil
+}
+
+func (r *messageHandlerRouter) HandleSessionSelection(context.Context, string, string, int64, int64) (router.Result, error) {
+	return router.NoReplyResult(), nil
+}
+
+func (r *messageHandlerRouter) HandleSecurityDecision(context.Context, string, string, string, bool) (router.Result, error) {
+	return router.NoReplyResult(), nil
 }
 
 func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -121,45 +140,14 @@ func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *
 		Raw:       update,
 	}
 
-	if t.handleSpecialCommands(ctx, msg) {
-		return
-	}
-
 	if t.router != nil {
-		response, err := t.router.Route(ctx, msg)
+		result, err := t.router.Route(ctx, router.Request{Message: &msg})
 		if err != nil {
-			if strings.Contains(err.Error(), "user context") && strings.Contains(err.Error(), "not found") {
-				workspaces, listErr := t.store.ListWorkspaces(ctx)
-				if listErr != nil {
-					slog.Error("listing workspaces for new user", "error", listErr)
-					return
-				}
-				if len(workspaces) == 0 {
-					chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
-					_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
-						ChatID: chatID,
-						Text:   "No workspaces configured. Use the MCP tools to register a workspace first.",
-					})
-					return
-				}
-				kb := WorkspaceKeyboard(workspaces, 0)
-				chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
-				_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
-					ChatID:      chatID,
-					Text:        "Select a workspace to get started:",
-					ReplyMarkup: kb,
-				})
-				return
-			}
 			slog.Error("router failed", "channel", msg.Channel, "sender", msg.SenderID, "error", err)
 			return
 		}
-		if response != "" {
-			_ = t.Send(ctx, core.OutboundMessage{
-				Channel:     "telegram",
-				RecipientID: msg.SenderID,
-				Content:     response,
-			})
+		if err := t.renderResult(ctx, msg.SenderID, msg.ID, result); err != nil {
+			slog.Error("render result failed", "channel", msg.Channel, "sender", msg.SenderID, "error", err)
 		}
 		return
 	}
@@ -170,64 +158,6 @@ func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *
 		RecipientID: msg.SenderID,
 		Content:     msg.Content,
 	})
-}
-
-func (t *TelegramAdapter) handleSpecialCommands(ctx context.Context, msg core.InboundMessage) bool {
-	content := strings.TrimSpace(msg.Content)
-
-	if content == "/workspaces" {
-		workspaces, err := t.store.ListWorkspaces(ctx)
-		if err != nil {
-			slog.Error("listing workspaces", "error", err)
-			return true
-		}
-		kb := WorkspaceKeyboard(workspaces, 0)
-		chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
-		_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:      chatID,
-			Text:        "Select a workspace:",
-			ReplyMarkup: kb,
-		})
-		return true
-	}
-
-	if content == "/sessions" {
-		active, err := t.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
-		if err != nil {
-			chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
-			_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: chatID,
-				Text:   "No active workspace. Use /workspaces to select one.",
-			})
-			return true
-		}
-
-		sessions, err := t.store.ListSessionsForWorkspace(ctx, active.WorkspaceID)
-		if err != nil {
-			slog.Error("listing sessions", "error", err)
-			return true
-		}
-
-		var previews []SessionPreview
-		for _, s := range sessions {
-			previews = append(previews, SessionPreview{
-				Name:   fmt.Sprintf("ai-chat-%d-%s", active.WorkspaceID, s.Slug),
-				Status: s.Status,
-				Age:    formatAge(s.LastActivity),
-			})
-		}
-
-		kb := SessionKeyboard(previews)
-		chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
-		_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:      chatID,
-			Text:        "Select a session:",
-			ReplyMarkup: kb,
-		})
-		return true
-	}
-
-	return false
 }
 
 func (t *TelegramAdapter) Start(ctx context.Context) error {
@@ -340,4 +270,48 @@ func (t *TelegramAdapter) RegisterSessionChat(sessionID int64, chatID string) {
 	t.sessionToChatMutex.Lock()
 	defer t.sessionToChatMutex.Unlock()
 	t.sessionToChat[sessionID] = chatID
+}
+
+func (t *TelegramAdapter) renderResult(ctx context.Context, recipientID, replyToID string, result router.Result) error {
+	switch result.Kind {
+	case router.ResultNoReply:
+		return nil
+	case router.ResultText:
+		if result.Text == "" {
+			return nil
+		}
+		return t.Send(ctx, core.OutboundMessage{Channel: "telegram", RecipientID: recipientID, Content: result.Text, ReplyToID: replyToID})
+	case router.ResultWorkspacePicker:
+		if result.WorkspacePicker == nil {
+			return nil
+		}
+		chatID, err := strconv.ParseInt(recipientID, 10, 64)
+		if err != nil {
+			return err
+		}
+		_, err = t.bot.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: result.WorkspacePicker.Prompt, ReplyMarkup: WorkspacePickerKeyboard(result.WorkspacePicker)})
+		return err
+	case router.ResultSessionPicker:
+		if result.SessionPicker == nil {
+			return nil
+		}
+		chatID, err := strconv.ParseInt(recipientID, 10, 64)
+		if err != nil {
+			return err
+		}
+		_, err = t.bot.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: result.SessionPicker.Prompt, ReplyMarkup: SessionPickerKeyboard(result.SessionPicker)})
+		return err
+	case router.ResultSecurityConfirmation:
+		if result.SecurityConfirmation == nil {
+			return nil
+		}
+		chatID, err := strconv.ParseInt(recipientID, 10, 64)
+		if err != nil {
+			return err
+		}
+		_, err = t.bot.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: result.SecurityConfirmation.Summary, ReplyMarkup: SecurityWarningKeyboard(result.SecurityConfirmation.Token)})
+		return err
+	default:
+		return nil
+	}
 }

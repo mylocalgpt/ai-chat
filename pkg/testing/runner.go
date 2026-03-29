@@ -297,13 +297,13 @@ func (h *TestHarness) SendMessageStandalone(ctx context.Context, senderID, conte
 		Channel:  "test",
 		Content:  content,
 	}
-	resp, err := h.Router.Route(ctx, msg)
+	result, err := h.Router.Route(ctx, router.Request{Message: &msg})
 	if err != nil {
 		return "", err
 	}
 
-	if resp != "" {
-		return resp, nil
+	if rendered := renderResultForTest(result); rendered != "" {
+		return rendered, nil
 	}
 
 	active, err := h.Store.GetActiveWorkspace(ctx, senderID, "test")
