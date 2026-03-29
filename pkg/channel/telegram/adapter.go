@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -80,6 +81,7 @@ type TelegramAdapter struct {
 	router       Router
 	store        *store.Store
 	cancel       context.CancelFunc
+	shutdownFunc context.CancelFunc
 	running      atomic.Bool
 
 	callbackHandler *callbackHandler
@@ -97,7 +99,10 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 		callbackHandler: newCallbackHandler(nil, allowed),
 	}
 
-	b, err := bot.New(cfg.BotToken, bot.WithDefaultHandler(adapter.handleUpdate))
+	b, err := bot.New(cfg.BotToken,
+		bot.WithDefaultHandler(adapter.handleUpdate),
+		bot.WithErrorsHandler(adapter.handleBotError),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("creating telegram bot: %w", err)
 	}
@@ -117,6 +122,23 @@ func (t *TelegramAdapter) SetRouter(r Router) {
 
 func (t *TelegramAdapter) SetBot(b telegramBot) {
 	t.bot = b
+}
+
+// SetShutdownFunc sets the function called to trigger full application shutdown
+// when a polling conflict is detected at runtime.
+func (t *TelegramAdapter) SetShutdownFunc(fn context.CancelFunc) {
+	t.shutdownFunc = fn
+}
+
+func (t *TelegramAdapter) handleBotError(err error) {
+	if strings.Contains(err.Error(), "terminated by other getUpdates request") {
+		slog.Error("telegram polling conflict detected: another instance is polling this bot token, shutting down", "error", err)
+		if t.shutdownFunc != nil {
+			t.shutdownFunc()
+		}
+		return
+	}
+	slog.Error("telegram bot error", "error", err)
 }
 
 func (t *TelegramAdapter) ProcessUpdate(ctx context.Context, update *models.Update) {

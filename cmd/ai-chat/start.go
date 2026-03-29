@@ -113,6 +113,7 @@ func runStart(args []string) {
 
 	// Wire message handlers.
 	tg.SetRouter(runtime.Router)
+	tg.SetShutdownFunc(cancel)
 	wg := app.StartBackground(ctx, st, runtime.SessionManager, tg)
 
 	// Start Telegram long polling.
