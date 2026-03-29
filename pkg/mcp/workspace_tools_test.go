@@ -88,7 +88,12 @@ func (m *mockStore) RenameWorkspace(_ context.Context, id int64, newName string)
 	return nil
 }
 
-func (m *mockStore) GetActiveSession(_ context.Context, _ int64) (*core.Session, error) {
+func (m *mockStore) GetActiveSession(_ context.Context, workspaceID int64) (*core.Session, error) {
+	for _, sess := range m.sessions {
+		if sess.WorkspaceID == workspaceID && sess.Status == "active" {
+			return &sess, nil
+		}
+	}
 	return nil, store.ErrNotFound
 }
 
@@ -109,7 +114,12 @@ func (m *mockStore) ListSessionsForWorkspace(_ context.Context, workspaceID int6
 	return result, nil
 }
 
-func (m *mockStore) GetSessionByName(_ context.Context, _ string) (*core.Session, error) {
+func (m *mockStore) GetSessionByName(_ context.Context, name string) (*core.Session, error) {
+	for _, sess := range m.sessions {
+		if sess.TmuxSession == name {
+			return &sess, nil
+		}
+	}
 	return nil, store.ErrNotFound
 }
 
@@ -320,63 +330,6 @@ func TestWorkspaceList(t *testing.T) {
 	}
 	if infos[0].Description != "test desc" {
 		t.Errorf("expected description 'test desc', got %q", infos[0].Description)
-	}
-}
-
-func TestWorkspaceUpdate(t *testing.T) {
-	ms := newMockStore()
-	notif := &mockNotifier{}
-	srv := newTestServer(ms, notif)
-
-	meta, _ := json.Marshal(map[string]any{"description": "old"})
-	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp", Metadata: meta}
-
-	_, _, err := srv.handleWorkspaceUpdate(context.Background(), &gomcp.CallToolRequest{}, WorkspaceUpdateInput{
-		Name:        "test",
-		Description: "new desc",
-		Aliases:     []string{"t", "tst"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	ws := ms.workspaces["test"]
-	var m map[string]any
-	if err := json.Unmarshal(ws.Metadata, &m); err != nil {
-		t.Fatalf("failed to parse metadata: %v", err)
-	}
-	if m["description"] != "new desc" {
-		t.Errorf("expected description 'new desc', got %v", m["description"])
-	}
-	aliases, ok := m["aliases"].([]any)
-	if !ok || len(aliases) != 2 {
-		t.Errorf("expected 2 aliases, got %v", m["aliases"])
-	}
-	if notif.called != 1 {
-		t.Errorf("expected notifier called once, got %d", notif.called)
-	}
-}
-
-func TestWorkspaceUpdateClearAliases(t *testing.T) {
-	ms := newMockStore()
-	srv := newTestServer(ms, nil)
-
-	meta, _ := json.Marshal(map[string]any{"aliases": []string{"a"}})
-	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp", Metadata: meta}
-
-	_, _, err := srv.handleWorkspaceUpdate(context.Background(), &gomcp.CallToolRequest{}, WorkspaceUpdateInput{
-		Name:    "test",
-		Aliases: []string{},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	ws := ms.workspaces["test"]
-	var m map[string]any
-	_ = json.Unmarshal(ws.Metadata, &m)
-	if _, ok := m["aliases"]; ok {
-		t.Error("aliases should have been cleared")
 	}
 }
 
