@@ -127,15 +127,31 @@ func splitRecursive(text string, maxLen int, regions []fenceRegion) []string {
 	if inFence {
 		fenceCloseRunes := utf8.RuneCountInString(fenceCloseTag)
 
-		if chunkEnd+fenceCloseRunes > maxLen {
-			chunkEnd = maxLen - fenceCloseRunes
+		// Scan for open HTML tags before the fence region (tags inside fences are skipped by scanTags).
+		ts := scanTags(string(runes[:chunkEnd]), regions)
+		closeTags := ts.closeAll()
+		reopenTags := ts.reopenAll()
+		closeTagRunes := utf8.RuneCountInString(closeTags)
+
+		totalCloseRunes := fenceCloseRunes + closeTagRunes
+		for chunkEnd+totalCloseRunes > maxLen {
+			chunkEnd = maxLen - totalCloseRunes
 			if chunkEnd < 1 {
 				chunkEnd = 1
 			}
+			ts = scanTags(string(runes[:chunkEnd]), regions)
+			closeTags = ts.closeAll()
+			reopenTags = ts.reopenAll()
+			newCloseRunes := utf8.RuneCountInString(closeTags)
+			if newCloseRunes == closeTagRunes {
+				break // stable
+			}
+			closeTagRunes = newCloseRunes
+			totalCloseRunes = fenceCloseRunes + closeTagRunes
 		}
 
-		chunk := string(runes[:chunkEnd]) + fenceCloseTag
-		remainder := fence.openTag + string(runes[chunkEnd:])
+		chunk := string(runes[:chunkEnd]) + fenceCloseTag + closeTags
+		remainder := reopenTags + fence.openTag + string(runes[chunkEnd:])
 
 		chunk = strings.TrimSpace(chunk)
 		if chunk != "" {
@@ -147,22 +163,53 @@ func splitRecursive(text string, maxLen int, regions []fenceRegion) []string {
 			chunks = append(chunks, chunk)
 		}
 
-		newRegions := adjustRegions(regions, chunkEnd, fence)
+		tagReopenRunes := utf8.RuneCountInString(reopenTags)
+		newRegions := adjustRegions(regions, chunkEnd, fence, tagReopenRunes)
 		subChunks := splitRecursive(remainder, maxLen, newRegions)
 		chunks = append(chunks, subChunks...)
 
 		return chunks
 	}
 
+	// Not in a fence: scan for open tags in the chunk.
+	// Loop until chunkEnd is stable, because reducing chunkEnd may expose different
+	// open tags (e.g. cutting before a </i> leaves it on the stack), requiring more room.
+	ts := scanTags(string(runes[:chunkEnd]), regions)
+	closeTags := ts.closeAll()
+	reopenTags := ts.reopenAll()
+	closeTagRunes := utf8.RuneCountInString(closeTags)
+
+	for closeTagRunes > 0 && chunkEnd+closeTagRunes > maxLen {
+		chunkEnd = maxLen - closeTagRunes
+		if chunkEnd < 1 {
+			chunkEnd = 1
+		}
+		ts = scanTags(string(runes[:chunkEnd]), regions)
+		closeTags = ts.closeAll()
+		reopenTags = ts.reopenAll()
+		newCloseRunes := utf8.RuneCountInString(closeTags)
+		if newCloseRunes == closeTagRunes {
+			break // stable
+		}
+		closeTagRunes = newCloseRunes
+	}
+
+	// Trim first, then append/prepend tags so trimming does not strip them.
 	chunk := strings.TrimSpace(string(runes[:chunkEnd]))
 	remainder := strings.TrimLeft(string(runes[chunkEnd:]), " \t\n")
+
+	if ts.len() > 0 {
+		chunk += closeTags
+		remainder = reopenTags + remainder
+	}
 
 	var chunks []string
 	if chunk != "" {
 		chunks = append(chunks, chunk)
 	}
 
-	newRegions := adjustRegions(regions, chunkEnd, nil)
+	tagReopenRunes := utf8.RuneCountInString(reopenTags)
+	newRegions := adjustRegions(regions, chunkEnd, nil, tagReopenRunes)
 	subChunks := splitRecursive(remainder, maxLen, newRegions)
 	chunks = append(chunks, subChunks...)
 
@@ -208,22 +255,193 @@ func findBestSplitPoint(runes []rune, maxLen int, regions []fenceRegion) int {
 	return 0
 }
 
-func adjustRegions(regions []fenceRegion, splitPoint int, activeFence *fenceRegion) []fenceRegion {
+// tagStack tracks open inline HTML tags for split boundary handling.
+type tagStack struct {
+	tags []string // tag names in open order, e.g. ["b", "i"]
+}
+
+func (ts *tagStack) push(tag string) {
+	ts.tags = append(ts.tags, tag)
+}
+
+// pop removes the last occurrence of tag from the stack (handles misnesting gracefully).
+func (ts *tagStack) pop(tag string) {
+	for i := len(ts.tags) - 1; i >= 0; i-- {
+		if ts.tags[i] == tag {
+			ts.tags = append(ts.tags[:i], ts.tags[i+1:]...)
+			return
+		}
+	}
+}
+
+// closeAll returns closing tags in reverse order, e.g. "</i></b>".
+func (ts *tagStack) closeAll() string {
+	if len(ts.tags) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i := len(ts.tags) - 1; i >= 0; i-- {
+		b.WriteString("</")
+		b.WriteString(ts.tags[i])
+		b.WriteByte('>')
+	}
+	return b.String()
+}
+
+// reopenAll returns opening tags in original order, e.g. "<b><i>".
+func (ts *tagStack) reopenAll() string {
+	if len(ts.tags) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, tag := range ts.tags {
+		b.WriteByte('<')
+		b.WriteString(tag)
+		b.WriteByte('>')
+	}
+	return b.String()
+}
+
+func (ts *tagStack) clone() tagStack {
+	if len(ts.tags) == 0 {
+		return tagStack{}
+	}
+	cloned := make([]string, len(ts.tags))
+	copy(cloned, ts.tags)
+	return tagStack{tags: cloned}
+}
+
+func (ts *tagStack) len() int {
+	return len(ts.tags)
+}
+
+// trackedTags are the inline HTML tags we track across split boundaries.
+// We do NOT track pre, code, or pre><code - those are handled by the fence system.
+var trackedTags = map[string]bool{
+	"b":          true,
+	"i":          true,
+	"u":          true,
+	"s":          true,
+	"a":          true,
+	"blockquote": true,
+}
+
+// isInsideFenceRegion returns true if pos falls inside any fence region.
+func isInsideFenceRegion(pos int, regions []fenceRegion) bool {
+	for _, r := range regions {
+		if pos >= r.start && pos < r.end {
+			return true
+		}
+	}
+	return false
+}
+
+// scanTags scans HTML text for open/close tags, skipping positions inside fence regions.
+// Returns a tagStack with the currently open tags at the end of text.
+func scanTags(text string, regions []fenceRegion) tagStack {
+	var ts tagStack
+	runes := []rune(text)
+	n := len(runes)
+
+	i := 0
+	for i < n {
+		if runes[i] != '<' {
+			i++
+			continue
+		}
+
+		// Skip if inside a fence region.
+		if isInsideFenceRegion(i, regions) {
+			i++
+			continue
+		}
+
+		// Found '<', determine if it is a closing tag.
+		if i+1 >= n {
+			break
+		}
+
+		isClose := runes[i+1] == '/'
+
+		// Find the closing '>'.
+		end := -1
+		for j := i + 1; j < n; j++ {
+			if runes[j] == '>' {
+				end = j
+				break
+			}
+		}
+		if end == -1 {
+			break
+		}
+
+		// Extract tag name.
+		var tagName string
+		if isClose {
+			// </tagname>
+			tagName = string(runes[i+2 : end])
+		} else {
+			// <tagname> or <tagname attr="...">
+			// Find end of tag name (space or >).
+			nameEnd := end
+			for j := i + 1; j < end; j++ {
+				if runes[j] == ' ' {
+					nameEnd = j
+					break
+				}
+			}
+			tagName = string(runes[i+1 : nameEnd])
+		}
+
+		tagName = strings.TrimSpace(strings.ToLower(tagName))
+
+		if trackedTags[tagName] {
+			if isClose {
+				ts.pop(tagName)
+			} else {
+				ts.push(tagName)
+			}
+		}
+
+		i = end + 1
+	}
+
+	return ts
+}
+
+func adjustRegions(regions []fenceRegion, splitPoint int, activeFence *fenceRegion, tagReopenRunes int) []fenceRegion {
 	var adjusted []fenceRegion
+
+	// Total prefix length in the remainder text.
+	var prefixRunes int
+	if activeFence != nil {
+		prefixRunes = tagReopenRunes + utf8.RuneCountInString(activeFence.openTag)
+	} else {
+		prefixRunes = tagReopenRunes
+	}
 
 	for _, r := range regions {
 		if r.end <= splitPoint {
 			continue
 		}
 
-		newStart := r.start - splitPoint
-		newEnd := r.end - splitPoint
-
-		if activeFence != nil {
-			openTagRunes := utf8.RuneCountInString(activeFence.openTag)
-			newStart += openTagRunes
-			newEnd += openTagRunes
+		// For the active fence (the one we split inside), its position in the
+		// remainder is fixed: it starts right after the tag reopen prefix,
+		// because the remainder is: reopenTags + fence.openTag + rawText[chunkEnd:].
+		if activeFence != nil && r.start == activeFence.start && r.end == activeFence.end {
+			newEnd := r.end - splitPoint + prefixRunes
+			adjusted = append(adjusted, fenceRegion{
+				start:   tagReopenRunes,
+				end:     newEnd,
+				openTag: r.openTag,
+			})
+			continue
 		}
+
+		// For other regions (after the split point), shift by the difference
+		// between the prefix and the consumed text.
+		newStart := r.start - splitPoint + prefixRunes
+		newEnd := r.end - splitPoint + prefixRunes
 
 		if newStart < 0 {
 			newStart = 0

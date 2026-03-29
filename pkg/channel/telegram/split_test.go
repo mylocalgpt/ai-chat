@@ -571,3 +571,268 @@ func TestSplitMessageMultipleLanguages(t *testing.T) {
 		t.Error("expected at least one chunk to reopen with Python language tag")
 	}
 }
+
+func TestTagStack(t *testing.T) {
+	t.Run("push and len", func(t *testing.T) {
+		var ts tagStack
+		if ts.len() != 0 {
+			t.Errorf("empty stack len: got %d, want 0", ts.len())
+		}
+		ts.push("b")
+		ts.push("i")
+		if ts.len() != 2 {
+			t.Errorf("after 2 pushes: got %d, want 2", ts.len())
+		}
+	})
+
+	t.Run("pop removes last matching", func(t *testing.T) {
+		var ts tagStack
+		ts.push("b")
+		ts.push("i")
+		ts.push("b")
+		ts.pop("b")
+		// Should remove the last "b", leaving ["b", "i"]
+		if ts.len() != 2 {
+			t.Fatalf("after pop: got len %d, want 2", ts.len())
+		}
+		if ts.tags[0] != "b" || ts.tags[1] != "i" {
+			t.Errorf("after pop: got %v, want [b i]", ts.tags)
+		}
+	})
+
+	t.Run("pop nonexistent is no-op", func(t *testing.T) {
+		var ts tagStack
+		ts.push("b")
+		ts.pop("i")
+		if ts.len() != 1 {
+			t.Errorf("pop nonexistent: got len %d, want 1", ts.len())
+		}
+	})
+
+	t.Run("closeAll reverse order", func(t *testing.T) {
+		var ts tagStack
+		ts.push("b")
+		ts.push("i")
+		got := ts.closeAll()
+		want := "</i></b>"
+		if got != want {
+			t.Errorf("closeAll: got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("closeAll empty", func(t *testing.T) {
+		var ts tagStack
+		if got := ts.closeAll(); got != "" {
+			t.Errorf("closeAll empty: got %q, want empty", got)
+		}
+	})
+
+	t.Run("reopenAll original order", func(t *testing.T) {
+		var ts tagStack
+		ts.push("b")
+		ts.push("i")
+		got := ts.reopenAll()
+		want := "<b><i>"
+		if got != want {
+			t.Errorf("reopenAll: got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("reopenAll empty", func(t *testing.T) {
+		var ts tagStack
+		if got := ts.reopenAll(); got != "" {
+			t.Errorf("reopenAll empty: got %q, want empty", got)
+		}
+	})
+
+	t.Run("clone is independent", func(t *testing.T) {
+		var ts tagStack
+		ts.push("b")
+		ts.push("i")
+		cloned := ts.clone()
+		cloned.push("u")
+		if ts.len() != 2 {
+			t.Errorf("original modified after clone push: got %d, want 2", ts.len())
+		}
+		if cloned.len() != 3 {
+			t.Errorf("clone should have 3: got %d", cloned.len())
+		}
+	})
+}
+
+func TestScanTags(t *testing.T) {
+	t.Run("simple closed tag", func(t *testing.T) {
+		ts := scanTags("<b>text</b>", nil)
+		if ts.len() != 0 {
+			t.Errorf("closed tag: got len %d, want 0", ts.len())
+		}
+	})
+
+	t.Run("open only", func(t *testing.T) {
+		ts := scanTags("<b>text", nil)
+		if ts.len() != 1 {
+			t.Fatalf("open only: got len %d, want 1", ts.len())
+		}
+		if ts.tags[0] != "b" {
+			t.Errorf("open only: got %q, want 'b'", ts.tags[0])
+		}
+	})
+
+	t.Run("nested", func(t *testing.T) {
+		ts := scanTags("<b><i>text", nil)
+		if ts.len() != 2 {
+			t.Fatalf("nested: got len %d, want 2", ts.len())
+		}
+		if ts.tags[0] != "b" || ts.tags[1] != "i" {
+			t.Errorf("nested: got %v, want [b i]", ts.tags)
+		}
+	})
+
+	t.Run("close then open", func(t *testing.T) {
+		ts := scanTags("<b>text</b><i>more", nil)
+		if ts.len() != 1 {
+			t.Fatalf("close then open: got len %d, want 1", ts.len())
+		}
+		if ts.tags[0] != "i" {
+			t.Errorf("close then open: got %q, want 'i'", ts.tags[0])
+		}
+	})
+
+	t.Run("with fence region skipped", func(t *testing.T) {
+		// <b>text<pre><code>code</code></pre>more
+		// The <code> and </code> inside the fence should not affect tag tracking.
+		text := "<b>text<pre><code>code</code></pre>more"
+		regions := findCodeFences(text)
+		ts := scanTags(text, regions)
+		if ts.len() != 1 {
+			t.Fatalf("fence skip: got len %d, want 1", ts.len())
+		}
+		if ts.tags[0] != "b" {
+			t.Errorf("fence skip: got %q, want 'b'", ts.tags[0])
+		}
+	})
+
+	t.Run("anchor tag with href", func(t *testing.T) {
+		ts := scanTags(`<a href="http://example.com">link`, nil)
+		if ts.len() != 1 {
+			t.Fatalf("anchor: got len %d, want 1", ts.len())
+		}
+		if ts.tags[0] != "a" {
+			t.Errorf("anchor: got %q, want 'a'", ts.tags[0])
+		}
+	})
+
+	t.Run("blockquote", func(t *testing.T) {
+		ts := scanTags("<blockquote>quote text", nil)
+		if ts.len() != 1 {
+			t.Fatalf("blockquote: got len %d, want 1", ts.len())
+		}
+		if ts.tags[0] != "blockquote" {
+			t.Errorf("blockquote: got %q, want 'blockquote'", ts.tags[0])
+		}
+	})
+
+	t.Run("untracked tags ignored", func(t *testing.T) {
+		ts := scanTags("<div>text<span>more</span></div>", nil)
+		if ts.len() != 0 {
+			t.Errorf("untracked: got len %d, want 0", ts.len())
+		}
+	})
+}
+
+func TestSplitMessageHTMLTagTracking(t *testing.T) {
+	// <b> + 200 chars + </b>, maxLen 80
+	content := strings.Repeat("x", 200)
+	input := "<b>" + content + "</b>"
+
+	chunks := SplitMessage(input, 80)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	for i, chunk := range chunks {
+		runeLen := len([]rune(chunk))
+		if runeLen > 80 {
+			t.Errorf("chunk %d exceeds maxLen: %d runes > 80", i, runeLen)
+		}
+	}
+
+	// First chunk should end with </b>
+	if !strings.HasSuffix(chunks[0], "</b>") {
+		t.Errorf("first chunk should end with </b>, got suffix: %q", chunks[0][max(0, len(chunks[0])-20):])
+	}
+
+	// Middle chunks and last chunk that need continuation should start with <b>
+	for i := 1; i < len(chunks); i++ {
+		if !strings.HasPrefix(chunks[i], "<b>") {
+			t.Errorf("chunk %d should start with <b>, got prefix: %q", i, chunks[i][:min(len(chunks[i]), 20)])
+		}
+	}
+
+	// Last chunk should end with original </b>
+	lastChunk := chunks[len(chunks)-1]
+	if !strings.HasSuffix(lastChunk, "</b>") {
+		t.Errorf("last chunk should end with </b>, got suffix: %q", lastChunk[max(0, len(lastChunk)-20):])
+	}
+}
+
+func TestSplitMessageNestedTags(t *testing.T) {
+	// <b><i> + 200 chars + </i></b>, maxLen 80
+	content := strings.Repeat("y", 200)
+	input := "<b><i>" + content + "</i></b>"
+
+	chunks := SplitMessage(input, 80)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	for i, chunk := range chunks {
+		runeLen := len([]rune(chunk))
+		if runeLen > 80 {
+			t.Errorf("chunk %d exceeds maxLen: %d runes > 80", i, runeLen)
+		}
+	}
+
+	// First chunk should close in reverse order: </i></b>
+	if !strings.HasSuffix(chunks[0], "</i></b>") {
+		t.Errorf("first chunk should end with </i></b>, got suffix: %q", chunks[0][max(0, len(chunks[0])-20):])
+	}
+
+	// Subsequent chunks should reopen in original order: <b><i>
+	for i := 1; i < len(chunks); i++ {
+		if !strings.HasPrefix(chunks[i], "<b><i>") {
+			t.Errorf("chunk %d should start with <b><i>, got prefix: %q", i, chunks[i][:min(len(chunks[i]), 20)])
+		}
+	}
+}
+
+func TestSplitMessageTagsAndCodeFence(t *testing.T) {
+	// <b>text<pre><code class="language-go">...code...</code></pre>more</b>
+	codeContent := strings.Repeat("z", 150)
+	input := `<b>text ` + `<pre><code class="language-go">` + codeContent + `</code></pre>` + ` more text here</b>`
+
+	chunks := SplitMessage(input, 100)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	for i, chunk := range chunks {
+		runeLen := len([]rune(chunk))
+		if runeLen > 100 {
+			t.Errorf("chunk %d exceeds maxLen: %d runes > 100", i, runeLen)
+		}
+	}
+
+	// Verify that <b> is tracked: the last chunk (after code fence) should still have <b> context.
+	// Look for a chunk that contains "more text" - it should be wrapped in <b>
+	for _, chunk := range chunks {
+		if strings.Contains(chunk, "more text") {
+			if !strings.Contains(chunk, "<b>") {
+				t.Errorf("chunk with 'more text' should have <b> reopened, got: %q", chunk)
+			}
+		}
+	}
+}
