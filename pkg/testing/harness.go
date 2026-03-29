@@ -3,6 +3,7 @@ package testing
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -21,6 +22,7 @@ type TestHarness struct {
 	Mock       *MockAdapter
 	TempDir    string
 	DB         *sql.DB
+	Proxy      *executor.SecurityProxy
 }
 
 func NewTestHarness(t interface {
@@ -45,8 +47,9 @@ func NewTestHarness(t interface {
 	st := store.New(db)
 
 	mock := NewMockAdapter("mock")
+	opencode := NewMockAdapter("opencode")
 
-	registry := &mockRegistry{mock: mock}
+	registry := &mockRegistry{mock: mock, opencode: opencode}
 
 	proxy := executor.NewSecurityProxy()
 
@@ -71,8 +74,14 @@ func NewTestHarness(t interface {
 		t.Fatalf("creating workspace: %v", err)
 	}
 
+	metadata, _ := json.Marshal(map[string]string{"default_agent": "mock"})
+	if err := st.UpdateWorkspaceMetadata(ctx, ws.ID, metadata); err != nil {
+		_ = db.Close()
+		t.Fatalf("updating workspace metadata: %v", err)
+	}
+
 	_, err = db.ExecContext(ctx,
-		"INSERT INTO user_contexts (sender_id, channel, active_workspace_id, updated_at) VALUES (?, ?, ?, ?)",
+		"INSERT INTO user_context (sender_id, channel, active_workspace_id, updated_at) VALUES (?, ?, ?, ?)",
 		"test-sender", "test", ws.ID, time.Now().UTC(),
 	)
 	if err != nil {
@@ -87,6 +96,7 @@ func NewTestHarness(t interface {
 		Mock:       mock,
 		TempDir:    tempDir,
 		DB:         db,
+		Proxy:      proxy,
 	}
 }
 
@@ -96,7 +106,37 @@ func (h *TestHarness) SendMessage(ctx context.Context, senderID, content string)
 		Channel:  "test",
 		Content:  content,
 	}
-	return h.Router.Route(ctx, msg)
+	resp, err := h.Router.Route(ctx, msg)
+	if err != nil {
+		return "", err
+	}
+
+	if resp != "" {
+		return resp, nil
+	}
+
+	uc, err := h.Store.GetUserContext(ctx, senderID, "test")
+	if err != nil {
+		return "", nil
+	}
+	if uc.ActiveSessionID == nil {
+		return "", nil
+	}
+
+	sess, err := h.Store.GetSessionByID(ctx, *uc.ActiveSessionID)
+	if err != nil {
+		return "", nil
+	}
+
+	responsesDir := h.TempDir + "/responses"
+	responseFile := executor.ResponseFilePath(responsesDir, sess.TmuxSession)
+
+	content, err = executor.LatestAgentMessage(responseFile)
+	if err != nil {
+		return "", err
+	}
+
+	return content, nil
 }
 
 func (h *TestHarness) Cleanup() {
@@ -106,16 +146,24 @@ func (h *TestHarness) Cleanup() {
 }
 
 type mockRegistry struct {
-	mock *MockAdapter
+	mock     *MockAdapter
+	opencode *MockAdapter
 }
 
 func (r *mockRegistry) GetAdapter(agent string) (executor.AgentAdapter, error) {
 	if agent == r.mock.Name() {
 		return r.mock, nil
 	}
+	if agent == "opencode" && r.opencode != nil {
+		return r.opencode, nil
+	}
 	return nil, fmt.Errorf("unknown agent: %q", agent)
 }
 
 func (r *mockRegistry) KnownAgents() []string {
-	return []string{r.mock.Name()}
+	agents := []string{r.mock.Name()}
+	if r.opencode != nil {
+		agents = append(agents, "opencode")
+	}
+	return agents
 }

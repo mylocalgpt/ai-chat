@@ -3,6 +3,7 @@ package testing
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -93,6 +94,10 @@ func (m *MockAdapter) Name() string {
 }
 
 func (m *MockAdapter) Spawn(ctx context.Context, session core.SessionInfo) error {
+	if session.ResponseFile != "" {
+		_, err := executor.NewResponseFile(filepath.Dir(session.ResponseFile), session)
+		return err
+	}
 	return nil
 }
 

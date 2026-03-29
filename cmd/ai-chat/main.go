@@ -21,7 +21,7 @@ func main() {
 	case "audit":
 		runAudit(os.Args[2:])
 	case "test":
-		fmt.Println("E2E testing not yet implemented")
+		runTest(os.Args[2:])
 	case "version":
 		fmt.Println("ai-chat", version)
 	default:
