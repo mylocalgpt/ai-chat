@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"strings"
 	"testing"
@@ -269,5 +270,52 @@ func TestSSEStreamNext_Comments(t *testing.T) {
 	}
 	if string(data) != `{"type":"idle"}` {
 		t.Errorf("data = %q, want %q", string(data), `{"type":"idle"}`)
+	}
+}
+
+func TestOpenCodeServeAdapter_GetAgentSessionID(t *testing.T) {
+	// Create adapter with nil server manager (we won't call server methods).
+	adapter := NewOpenCodeServeAdapter(nil)
+
+	session := core.SessionInfo{
+		Name:          "test-session",
+		Slug:          "a1b2",
+		Workspace:     "lab",
+		WorkspacePath: "/tmp/test-workspace",
+	}
+
+	key := sessionKey(session)
+
+	// Manually store a session ID.
+	adapter.sessionIDs.Store(key, "ses_test123")
+
+	// First call should return the stored ID.
+	got := adapter.GetAgentSessionID(session)
+	if got != "ses_test123" {
+		t.Errorf("first GetAgentSessionID() = %q, want %q", got, "ses_test123")
+	}
+
+	// Second call should return empty (read-once via LoadAndDelete).
+	got = adapter.GetAgentSessionID(session)
+	if got != "" {
+		t.Errorf("second GetAgentSessionID() = %q, want empty string", got)
+	}
+}
+
+func TestOpenCodeServeAdapter_Name(t *testing.T) {
+	adapter := NewOpenCodeServeAdapter(nil)
+	if name := adapter.Name(); name != "opencode" {
+		t.Errorf("Name() = %q, want %q", name, "opencode")
+	}
+}
+
+func TestOpenCodeServeAdapter_StopIsNoop(t *testing.T) {
+	adapter := NewOpenCodeServeAdapter(nil)
+	session := core.SessionInfo{
+		Name:          "test-session",
+		WorkspacePath: "/tmp/test",
+	}
+	if err := adapter.Stop(context.Background(), session); err != nil {
+		t.Errorf("Stop() = %v, want nil", err)
 	}
 }

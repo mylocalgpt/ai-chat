@@ -12,8 +12,8 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
 
-// OpenCodeAdapter implements AgentAdapter for OpenCode running in tmux.
-type OpenCodeAdapter struct {
+// OpenCodeTmuxAdapter implements AgentAdapter for OpenCode running in tmux.
+type OpenCodeTmuxAdapter struct {
 	tmux         tmuxRunner
 	pollInterval time.Duration
 	timeout      time.Duration
@@ -21,9 +21,9 @@ type OpenCodeAdapter struct {
 	proxy        *SecurityProxy
 }
 
-// NewOpenCodeAdapter returns a new OpenCode adapter.
-func NewOpenCodeAdapter(tmux tmuxRunner, proxy *SecurityProxy) *OpenCodeAdapter {
-	return &OpenCodeAdapter{
+// NewOpenCodeTmuxAdapter returns a new OpenCode tmux adapter.
+func NewOpenCodeTmuxAdapter(tmux tmuxRunner, proxy *SecurityProxy) *OpenCodeTmuxAdapter {
+	return &OpenCodeTmuxAdapter{
 		tmux:         tmux,
 		pollInterval: 1 * time.Second,
 		timeout:      5 * time.Minute,
@@ -40,12 +40,12 @@ var openCodeReadyRe = regexp.MustCompile(`(?im)(>\s*$|ask anything|input|opencod
 var openCodeBusyRe = regexp.MustCompile(`(?im)esc interrupt`)
 
 // Name returns the adapter name.
-func (a *OpenCodeAdapter) Name() string {
-	return "opencode"
+func (a *OpenCodeTmuxAdapter) Name() string {
+	return "opencode-tmux"
 }
 
 // Spawn starts OpenCode in a tmux session and creates the response file.
-func (a *OpenCodeAdapter) Spawn(ctx context.Context, session core.SessionInfo) error {
+func (a *OpenCodeTmuxAdapter) Spawn(ctx context.Context, session core.SessionInfo) error {
 	// Create tmux session.
 	if err := a.tmux.NewSession(session.Name, session.WorkspacePath); err != nil {
 		return fmt.Errorf("opencode spawn: create tmux session: %w", err)
@@ -91,7 +91,7 @@ func (a *OpenCodeAdapter) Spawn(ctx context.Context, session core.SessionInfo) e
 }
 
 // Send sends a message to OpenCode and writes the response to the file.
-func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, message string) error {
+func (a *OpenCodeTmuxAdapter) Send(ctx context.Context, session core.SessionInfo, message string) error {
 	// Capture pre-send snapshot.
 	snapshot, err := a.tmux.CapturePaneRaw(session.Name, 200)
 	if err != nil {
@@ -265,12 +265,12 @@ func containsAlphaNumeric(s string) bool {
 }
 
 // IsAlive reports whether the tmux session is still running.
-func (a *OpenCodeAdapter) IsAlive(session core.SessionInfo) bool {
+func (a *OpenCodeTmuxAdapter) IsAlive(session core.SessionInfo) bool {
 	return a.tmux.HasSession(session.Name)
 }
 
 // Stop kills the tmux session.
-func (a *OpenCodeAdapter) Stop(_ context.Context, session core.SessionInfo) error {
+func (a *OpenCodeTmuxAdapter) Stop(_ context.Context, session core.SessionInfo) error {
 	return a.tmux.KillSession(session.Name)
 }
 
@@ -282,7 +282,7 @@ var (
 
 // DetectStatus parses output for OpenCode status signals.
 // Kept for diagnostics even though not part of AgentAdapter interface.
-func (a *OpenCodeAdapter) DetectStatus(output string) AgentStatus {
+func (a *OpenCodeTmuxAdapter) DetectStatus(output string) AgentStatus {
 	if openCodeRateLimitRe.MatchString(output) {
 		return AgentStatus{
 			State:  AgentRateLimited,

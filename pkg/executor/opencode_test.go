@@ -10,7 +10,7 @@ import (
 )
 
 func TestOpenCodeDetectStatus(t *testing.T) {
-	a := NewOpenCodeAdapter(NewTmux(), nil)
+	a := NewOpenCodeTmuxAdapter(NewTmux(), nil)
 
 	tests := []struct {
 		name      string
@@ -195,7 +195,7 @@ func TestOpenCodeSendWaitsForPromptEcho(t *testing.T) {
 		"⬝⬝⬝⬝■■■■  esc interrupt",
 		"Hello\nHello\nBuild · gpt-5.4 · 2.0s",
 	}}
-	a := NewOpenCodeAdapter(tmx, nil)
+	a := NewOpenCodeTmuxAdapter(tmx, nil)
 	a.pollInterval = 5 * time.Millisecond
 	a.timeout = 100 * time.Millisecond
 

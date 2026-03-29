@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
@@ -252,5 +254,183 @@ func (h *ServerHandle) Abort(ctx context.Context, sessionID string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("abort: unexpected status %d", resp.StatusCode)
 	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// OpenCodeServeAdapter
+// ---------------------------------------------------------------------------
+
+// OpenCodeServeAdapter implements StreamingAdapter using opencode serve.
+type OpenCodeServeAdapter struct {
+	serverMgr  *ServerManager
+	sessionIDs sync.Map // key: workspace+":"+slug -> OpenCode session ID
+}
+
+// NewOpenCodeServeAdapter returns a new serve-based adapter.
+func NewOpenCodeServeAdapter(mgr *ServerManager) *OpenCodeServeAdapter {
+	return &OpenCodeServeAdapter{serverMgr: mgr}
+}
+
+// Name returns the adapter name.
+func (a *OpenCodeServeAdapter) Name() string {
+	return "opencode"
+}
+
+// sessionKey builds a deterministic map key from a SessionInfo.
+func sessionKey(s core.SessionInfo) string {
+	return s.WorkspacePath + ":" + s.Slug
+}
+
+// Spawn ensures the opencode serve server is running and creates a new
+// agent session when AgentSessionID is empty.
+func (a *OpenCodeServeAdapter) Spawn(ctx context.Context, session core.SessionInfo) error {
+	handle, err := a.serverMgr.GetOrStart(session.WorkspacePath)
+	if err != nil {
+		return fmt.Errorf("opencode serve spawn: %w", err)
+	}
+
+	if session.AgentSessionID == "" {
+		id, err := handle.CreateSession(ctx, session.Name)
+		if err != nil {
+			return fmt.Errorf("opencode serve spawn: create session: %w", err)
+		}
+		a.sessionIDs.Store(sessionKey(session), id)
+	}
+	return nil
+}
+
+// GetAgentSessionID returns the OpenCode session ID created during Spawn.
+// Uses LoadAndDelete for read-once semantics to prevent stale data.
+func (a *OpenCodeServeAdapter) GetAgentSessionID(session core.SessionInfo) string {
+	v, ok := a.sessionIDs.LoadAndDelete(sessionKey(session))
+	if !ok {
+		return ""
+	}
+	return v.(string)
+}
+
+// SendStream sends a message and returns a channel of streaming agent events.
+// SSE subscription happens before sending the prompt to avoid missing early events.
+func (a *OpenCodeServeAdapter) SendStream(ctx context.Context, session core.SessionInfo, message string) (<-chan core.AgentEvent, error) {
+	handle, err := a.serverMgr.GetOrStart(session.WorkspacePath)
+	if err != nil {
+		return nil, fmt.Errorf("opencode serve send stream: %w", err)
+	}
+	handle.Touch()
+
+	// Subscribe to SSE BEFORE sending the prompt so no early events are missed.
+	sse, err := handle.SubscribeEvents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("opencode serve send stream: subscribe: %w", err)
+	}
+
+	respBody, err := handle.SendPrompt(ctx, session.AgentSessionID, message)
+	if err != nil {
+		_ = sse.Close()
+		return nil, fmt.Errorf("opencode serve send stream: send prompt: %w", err)
+	}
+
+	ch := make(chan core.AgentEvent, 64)
+	go a.consumeEvents(ctx, sse, respBody, ch)
+	return ch, nil
+}
+
+// consumeEvents reads SSE events and forwards parsed AgentEvents to ch.
+// Stops on EventIdle, context cancellation, or stream error.
+func (a *OpenCodeServeAdapter) consumeEvents(ctx context.Context, sse *SSEStream, respBody io.ReadCloser, ch chan<- core.AgentEvent) {
+	defer close(ch)
+	defer func() { _ = sse.Close() }()
+	defer func() { _ = respBody.Close() }()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		eventType, data, err := sse.Next()
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			// Context cancellation surfaces as a read error; don't send
+			// an extra EventError in that case.
+			if ctx.Err() != nil {
+				return
+			}
+			ch <- core.AgentEvent{Type: core.EventError, Text: err.Error()}
+			return
+		}
+
+		evt, ok := parseSSEEvent(eventType, data)
+		if !ok {
+			continue
+		}
+
+		ch <- evt
+
+		if evt.Type == core.EventIdle {
+			return
+		}
+	}
+}
+
+// AbortStream cancels in-flight generation for the given session.
+func (a *OpenCodeServeAdapter) AbortStream(ctx context.Context, session core.SessionInfo) error {
+	handle, err := a.serverMgr.GetOrStart(session.WorkspacePath)
+	if err != nil {
+		return fmt.Errorf("opencode serve abort: %w", err)
+	}
+	return handle.Abort(ctx, session.AgentSessionID)
+}
+
+// Send is the synchronous fallback for the AgentAdapter interface.
+// It calls SendStream, drains the channel, and writes the agent response
+// to the response file.
+func (a *OpenCodeServeAdapter) Send(ctx context.Context, session core.SessionInfo, message string) error {
+	ch, err := a.SendStream(ctx, session, message)
+	if err != nil {
+		return err
+	}
+
+	var lastText string
+	for evt := range ch {
+		switch evt.Type {
+		case core.EventText:
+			// EventText is a complete snapshot; keep the latest one.
+			lastText = evt.Text
+		case core.EventError:
+			return fmt.Errorf("opencode serve send: agent error: %s", evt.Text)
+		}
+	}
+
+	if lastText != "" {
+		if err := AppendMessage(session.ResponseFile, ResponseMessage{
+			Role:      "agent",
+			Content:   lastText,
+			Timestamp: time.Now().UTC(),
+		}); err != nil {
+			return fmt.Errorf("opencode serve send: append agent message: %w", err)
+		}
+	}
+	return nil
+}
+
+// IsAlive checks whether the opencode serve server is healthy.
+func (a *OpenCodeServeAdapter) IsAlive(session core.SessionInfo) bool {
+	handle, ok := a.serverMgr.Get(session.WorkspacePath)
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return handle.Health(ctx) == nil
+}
+
+// Stop is a no-op. Individual sessions don't own the server;
+// the idle reaper in ServerManager handles server shutdown.
+func (a *OpenCodeServeAdapter) Stop(_ context.Context, _ core.SessionInfo) error {
 	return nil
 }

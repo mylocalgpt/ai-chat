@@ -14,7 +14,7 @@ func NewHarnessRegistry(tmux tmuxRunner) *HarnessRegistry {
 		adapters: make(map[string]AgentAdapter),
 	}
 	proxy := NewSecurityProxy()
-	r.adapters["opencode"] = NewOpenCodeAdapter(tmux, proxy)
+	r.adapters["opencode"] = NewOpenCodeTmuxAdapter(tmux, proxy)
 	r.adapters["copilot"] = NewCopilotAdapter(proxy)
 	return r
 }
