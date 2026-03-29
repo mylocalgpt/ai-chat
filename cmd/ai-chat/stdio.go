@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/mylocalgpt/ai-chat/pkg/app"
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
@@ -45,6 +46,10 @@ func runStdio() {
 
 	st := store.New(db)
 	defer func() { _ = st.Close() }()
+	if err := os.MkdirAll(cfg.ResponsesDir, 0o755); err != nil {
+		slog.Error("failed to create responses directory", "dir", cfg.ResponsesDir, "error", err)
+		os.Exit(1)
+	}
 
 	mcpCfg := &mcppkg.MCPConfig{
 		AllowedUsers: cfg.Telegram.AllowedUsers,
@@ -52,6 +57,7 @@ func runStdio() {
 	}
 
 	var opts []mcppkg.Option
+	var tg *telegram.TelegramAdapter
 
 	tmx := executor.NewTmux()
 	registry := executor.NewHarnessRegistry(tmx)
@@ -61,12 +67,13 @@ func runStdio() {
 	opts = append(opts, mcppkg.WithSessionManager(sessionMgr))
 
 	if cfg.Telegram.BotToken != "" {
-		tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
+		tg, err = telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
 			BotToken:     cfg.Telegram.BotToken,
 			AllowedUsers: cfg.Telegram.AllowedUsers,
 		}, st)
 		if err != nil {
 			slog.Warn("telegram adapter unavailable for MCP, continuing without it", "error", err)
+			tg = nil
 		} else {
 			opts = append(opts, mcppkg.WithNotifier(tg))
 			opts = append(opts, mcppkg.WithChannelAdapter(tg))
@@ -77,9 +84,16 @@ func runStdio() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	var backgroundWG interface{ Wait() }
+	if tg != nil {
+		backgroundWG = app.StartBackground(ctx, st, manager, tg)
+	} else {
+		backgroundWG = app.StartManagerBackground(ctx, manager)
+	}
 
 	if err := srv.Run(ctx); err != nil {
 		slog.Error("mcp server exited with error", "error", err)
 		os.Exit(1)
 	}
+	backgroundWG.Wait()
 }

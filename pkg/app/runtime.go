@@ -49,19 +49,26 @@ func NewRuntime(st *store.Store, registry session.AdapterRegistry, cfg RuntimeCo
 }
 
 func StartBackground(ctx context.Context, st messageStore, manager *session.Manager, channel core.Channel) *sync.WaitGroup {
+	wg := StartManagerBackground(ctx, manager)
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		forwardResponses(ctx, st, manager.ResponseCh(), channel)
+	}()
+
+	return wg
+}
+
+func StartManagerBackground(ctx context.Context, manager *session.Manager) *sync.WaitGroup {
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
 		if err := manager.Run(ctx); err != nil && err != ctx.Err() {
 			slog.Error("session manager error", "error", err)
 		}
-	}()
-
-	go func() {
-		defer wg.Done()
-		forwardResponses(ctx, st, manager.ResponseCh(), channel)
 	}()
 
 	return &wg
