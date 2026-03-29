@@ -427,14 +427,12 @@ func RunScenario(t T, h *TestHarness, name string) bool {
 	for _, s := range Scenarios {
 		if s.Name == name {
 			start := time.Now()
-			passed := true
 			defer func() {
 				if r := recover(); r != nil {
-					passed = false
 					t.Errorf("scenario %s panicked: %v", name, r)
 				}
 				dur := time.Since(start)
-				t.Logf("  %s: %s (%.1fs)", name, passFail(passed), dur.Seconds())
+				t.Logf("  %s: %s (%.1fs)", name, passFail(!t.Failed()), dur.Seconds())
 			}()
 			s.Run(t, h)
 			return !t.Failed()

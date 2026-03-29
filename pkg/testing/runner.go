@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
@@ -34,7 +35,7 @@ func (r *TestRunner) Run() *TestReport {
 	if r.Scenario != "" {
 		scenarios = nil
 		for _, s := range Scenarios {
-			if stringsEqualFold(s.Name, r.Scenario) {
+			if strings.EqualFold(s.Name, r.Scenario) {
 				scenarios = []Scenario{s}
 				break
 			}
@@ -62,25 +63,6 @@ func (r *TestRunner) Run() *TestReport {
 
 	report.End()
 	return report
-}
-
-func stringsEqualFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		if toLower(a[i]) != toLower(b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func toLower(c byte) byte {
-	if c >= 'A' && c <= 'Z' {
-		return c + ('a' - 'A')
-	}
-	return c
 }
 
 func (r *TestRunner) runScenario(s Scenario) error {
