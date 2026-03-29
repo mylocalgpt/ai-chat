@@ -11,7 +11,7 @@ import (
 )
 
 type SessionManager interface {
-	Send(ctx context.Context, senderID, channel, message string) error
+	Send(ctx context.Context, senderID, channel, message, replyToMsgID string) error
 	HandleSecurityDecision(ctx context.Context, senderID, channel, token string, approved bool) (string, error)
 	CreateSession(ctx context.Context, workspaceID int64, agent string) (*core.SessionInfo, error)
 	CreateSessionForSender(ctx context.Context, senderID, channel, agent string) (*core.SessionInfo, error)
@@ -46,7 +46,7 @@ func (r *Router) Route(ctx context.Context, req Request) (Result, error) {
 	cmd, ok := Parse(req.Message.Content)
 	if !ok {
 		if r.sessionMgr != nil {
-			err := r.sessionMgr.Send(ctx, req.Message.SenderID, req.Message.Channel, req.Message.Content)
+			err := r.sessionMgr.Send(ctx, req.Message.SenderID, req.Message.Channel, req.Message.Content, req.Message.ID)
 			if err != nil {
 				var decisionErr *core.SecurityDecisionError
 				if errors.As(err, &decisionErr) {

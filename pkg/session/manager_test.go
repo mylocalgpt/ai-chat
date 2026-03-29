@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +78,10 @@ func (m *mockStore) GetSessionByID(_ context.Context, _ int64) (*core.Session, e
 }
 
 func (m *mockStore) GetSessionByTmuxSession(_ context.Context, _ string) (*core.Session, error) {
+	return m.session, m.sessionErr
+}
+
+func (m *mockStore) GetSessionByAgentSessionID(_ context.Context, _ string) (*core.Session, error) {
 	return m.session, m.sessionErr
 }
 
@@ -681,7 +684,7 @@ func TestSendReturnsSecurityConfirmation(t *testing.T) {
 	registry := &mockRegistry{adapters: map[string]executor.AgentAdapter{"opencode": adapter}, agents: []string{"opencode"}}
 	m := NewManager(store, registry, executor.NewSecurityProxy(), ManagerConfig{ResponsesDir: filepath.Join(t.TempDir(), "responses")})
 
-	err := m.Send(context.Background(), "user1", "telegram", "my password is hunter2")
+	err := m.Send(context.Background(), "user1", "telegram", "my password is hunter2", "")
 	var decisionErr *core.SecurityDecisionError
 	if !errors.As(err, &decisionErr) {
 		t.Fatalf("expected security decision error, got %v", err)
@@ -708,7 +711,7 @@ func TestHandleSecurityDecisionApprovedSendsMessage(t *testing.T) {
 		t.Fatalf("creating response file: %v", err)
 	}
 
-	err := m.Send(context.Background(), "user1", "telegram", "my password is hunter2")
+	err := m.Send(context.Background(), "user1", "telegram", "my password is hunter2", "")
 	var decisionErr *core.SecurityDecisionError
 	if !errors.As(err, &decisionErr) {
 		t.Fatalf("expected security decision error, got %v", err)
@@ -744,7 +747,7 @@ func TestHandleSecurityDecisionUnauthorizedAttemptDoesNotConsumeToken(t *testing
 		t.Fatalf("creating response file: %v", err)
 	}
 
-	err := m.Send(context.Background(), "user1", "telegram", "my password is hunter2")
+	err := m.Send(context.Background(), "user1", "telegram", "my password is hunter2", "")
 	var decisionErr *core.SecurityDecisionError
 	if !errors.As(err, &decisionErr) {
 		t.Fatalf("expected security decision error, got %v", err)
@@ -789,7 +792,7 @@ func TestSendDoesNotPersistUndeliveredPrompt(t *testing.T) {
 		t.Fatalf("creating response file: %v", err)
 	}
 
-	err := m.Send(context.Background(), "user1", "telegram", "hello")
+	err := m.Send(context.Background(), "user1", "telegram", "hello", "")
 	if err == nil {
 		t.Fatal("expected send error")
 	}
@@ -838,15 +841,16 @@ func (m *mockStreamingAdapter) GetAgentSessionID(_ core.SessionInfo) string {
 	return id
 }
 
-func TestDispatchStreaming_WritesResponseFile(t *testing.T) {
+func TestDispatchStreaming_SendsResponseEvent(t *testing.T) {
 	responsesDir := filepath.Join(t.TempDir(), "responses")
 	ws := &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()}
 	sess := &core.Session{
-		ID:          42,
-		WorkspaceID: 1,
-		Agent:       "opencode",
-		TmuxSession: "ai-chat-lab-s1t2",
-		Slug:        "s1t2",
+		ID:             42,
+		WorkspaceID:    1,
+		Agent:          "opencode",
+		TmuxSession:    "ai-chat-lab-s1t2",
+		Slug:           "s1t2",
+		AgentSessionID: "ses_abc",
 	}
 	store := &mockStore{
 		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
@@ -878,27 +882,58 @@ func TestDispatchStreaming_WritesResponseFile(t *testing.T) {
 		t.Fatalf("creating response file: %v", err)
 	}
 
-	err := m.dispatchMessage(context.Background(), sess, info, "test message")
+	err := m.dispatchMessage(context.Background(), sess, info, "test message", "user1", "telegram", "msg123")
 	if err != nil {
 		t.Fatalf("dispatchMessage error: %v", err)
 	}
 
+	// Verify user message was written to response file.
 	rf, err := executor.ReadResponseFile(info.ResponseFile)
 	if err != nil {
 		t.Fatalf("reading response file: %v", err)
 	}
-	if len(rf.Messages) != 2 {
-		t.Fatalf("expected 2 messages (user + agent), got %d: %+v", len(rf.Messages), rf.Messages)
+	if len(rf.Messages) != 1 {
+		t.Fatalf("expected 1 message (user only), got %d: %+v", len(rf.Messages), rf.Messages)
 	}
 	if rf.Messages[0].Role != "user" || rf.Messages[0].Content != "test message" {
 		t.Errorf("unexpected user message: %+v", rf.Messages[0])
 	}
-	if rf.Messages[1].Role != "agent" || rf.Messages[1].Content != "Hello world" {
-		t.Errorf("unexpected agent message: %+v", rf.Messages[1])
+
+	// Verify ResponseEvent was sent to responseCh.
+	select {
+	case evt := <-m.responseCh:
+		if evt.SenderID != "user1" {
+			t.Errorf("expected SenderID %q, got %q", "user1", evt.SenderID)
+		}
+		if evt.Channel != "telegram" {
+			t.Errorf("expected Channel %q, got %q", "telegram", evt.Channel)
+		}
+		if evt.ReplyToID != "msg123" {
+			t.Errorf("expected ReplyToID %q, got %q", "msg123", evt.ReplyToID)
+		}
+		if evt.AgentSessionID != "ses_abc" {
+			t.Errorf("expected AgentSessionID %q, got %q", "ses_abc", evt.AgentSessionID)
+		}
+		if evt.ResponseFile != info.ResponseFile {
+			t.Errorf("expected ResponseFile %q, got %q", info.ResponseFile, evt.ResponseFile)
+		}
+		if evt.Events == nil {
+			t.Fatal("expected Events channel to be non-nil")
+		}
+		// Drain events to verify they flow through.
+		var collected []core.AgentEvent
+		for e := range evt.Events {
+			collected = append(collected, e)
+		}
+		if len(collected) != len(events) {
+			t.Fatalf("expected %d events, got %d", len(events), len(collected))
+		}
+	default:
+		t.Fatal("expected ResponseEvent on responseCh")
 	}
 }
 
-func TestDispatchStreaming_DeltaFallback(t *testing.T) {
+func TestDispatchStreaming_DeltaOnlyForwardsEvents(t *testing.T) {
 	responsesDir := filepath.Join(t.TempDir(), "responses")
 	ws := &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()}
 	sess := &core.Session{
@@ -935,24 +970,40 @@ func TestDispatchStreaming_DeltaFallback(t *testing.T) {
 		t.Fatalf("creating response file: %v", err)
 	}
 
-	err := m.dispatchMessage(context.Background(), sess, info, "ping")
+	err := m.dispatchMessage(context.Background(), sess, info, "ping", "user1", "telegram", "")
 	if err != nil {
 		t.Fatalf("dispatchMessage error: %v", err)
 	}
 
+	// Verify only user message was written (agent message is now forwardResponses' job).
 	rf, err := executor.ReadResponseFile(info.ResponseFile)
 	if err != nil {
 		t.Fatalf("reading response file: %v", err)
 	}
-	if len(rf.Messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(rf.Messages))
+	if len(rf.Messages) != 1 {
+		t.Fatalf("expected 1 message (user only), got %d", len(rf.Messages))
 	}
-	if rf.Messages[1].Content != "Only deltas" {
-		t.Errorf("expected delta fallback text %q, got %q", "Only deltas", rf.Messages[1].Content)
+
+	// Verify ResponseEvent with events channel was sent.
+	select {
+	case evt := <-m.responseCh:
+		if evt.Events == nil {
+			t.Fatal("expected Events channel to be non-nil")
+		}
+		// Drain events.
+		var count int
+		for range evt.Events {
+			count++
+		}
+		if count != len(events) {
+			t.Fatalf("expected %d events, got %d", len(events), count)
+		}
+	default:
+		t.Fatal("expected ResponseEvent on responseCh")
 	}
 }
 
-func TestDispatchStreaming_ErrorEvent(t *testing.T) {
+func TestDispatchStreaming_ErrorEventForwarded(t *testing.T) {
 	responsesDir := filepath.Join(t.TempDir(), "responses")
 	ws := &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()}
 	sess := &core.Session{
@@ -987,12 +1038,30 @@ func TestDispatchStreaming_ErrorEvent(t *testing.T) {
 		t.Fatalf("creating response file: %v", err)
 	}
 
-	err := m.dispatchMessage(context.Background(), sess, info, "trigger error")
-	if err == nil {
-		t.Fatal("expected error from EventError")
+	// With the new flow, dispatchStreaming returns nil and forwards error events
+	// via the events channel. Error handling is now forwardResponses' responsibility.
+	err := m.dispatchMessage(context.Background(), sess, info, "trigger error", "user1", "telegram", "")
+	if err != nil {
+		t.Fatalf("expected no error from dispatchMessage, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "something went wrong") {
-		t.Errorf("expected error to contain agent error text, got: %v", err)
+
+	// Verify the error event is forwarded via responseCh.
+	select {
+	case evt := <-m.responseCh:
+		if evt.Events == nil {
+			t.Fatal("expected Events channel to be non-nil")
+		}
+		var gotError bool
+		for e := range evt.Events {
+			if e.Type == core.EventError && e.Text == "something went wrong" {
+				gotError = true
+			}
+		}
+		if !gotError {
+			t.Error("expected error event to be forwarded through events channel")
+		}
+	default:
+		t.Fatal("expected ResponseEvent on responseCh")
 	}
 }
 

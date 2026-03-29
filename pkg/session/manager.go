@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +29,7 @@ type sessionStore interface {
 	GetWorkspaceByAlias(ctx context.Context, alias string) (*core.Workspace, error)
 	GetSessionByID(ctx context.Context, id int64) (*core.Session, error)
 	GetSessionByTmuxSession(ctx context.Context, tmuxSession string) (*core.Session, error)
+	GetSessionByAgentSessionID(ctx context.Context, agentSessionID string) (*core.Session, error)
 	GetActiveSession(ctx context.Context, workspaceID int64) (*core.Session, error)
 	GetActiveSessionForSender(ctx context.Context, senderID, channel string, workspaceID int64) (*core.Session, error)
 	CreateSession(ctx context.Context, workspaceID int64, agent, slug, tmuxSession string) (*core.Session, error)
@@ -110,7 +110,7 @@ func NewManager(store sessionStore, adapters AdapterRegistry, proxy *executor.Se
 	}
 }
 
-func (m *Manager) Send(ctx context.Context, senderID, channel, message string) error {
+func (m *Manager) Send(ctx context.Context, senderID, channel, message, replyToMsgID string) error {
 	sess, info, err := m.GetOrCreateActiveSession(ctx, senderID, channel, "")
 	if err != nil {
 		return err
@@ -128,11 +128,11 @@ func (m *Manager) Send(ctx context.Context, senderID, channel, message string) e
 		decision.PendingID = token
 		return &core.SecurityDecisionError{Decision: decision}
 	default:
-		return m.dispatchMessage(ctx, sess, info, message)
+		return m.dispatchMessage(ctx, sess, info, message, senderID, channel, replyToMsgID)
 	}
 }
 
-func (m *Manager) SendToSession(ctx context.Context, senderID, channel string, sessionID int64, message string) error {
+func (m *Manager) SendToSession(ctx context.Context, senderID, channel string, sessionID int64, message, replyToMsgID string) error {
 	ws, sess, info, err := m.loadSessionTarget(ctx, sessionID, true)
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ func (m *Manager) SendToSession(ctx context.Context, senderID, channel string, s
 		decision.PendingID = token
 		return &core.SecurityDecisionError{Decision: decision}
 	default:
-		return m.dispatchMessage(ctx, sess, info, message)
+		return m.dispatchMessage(ctx, sess, info, message, senderID, channel, replyToMsgID)
 	}
 }
 
@@ -171,7 +171,7 @@ func (m *Manager) HandleSecurityDecision(ctx context.Context, senderID, channel,
 		return "", fmt.Errorf("getting session: %w", err)
 	}
 	info := m.buildSessionInfo(ws, sess)
-	if err := m.dispatchMessage(ctx, sess, info, pending.Message); err != nil {
+	if err := m.dispatchMessage(ctx, sess, info, pending.Message, pending.SenderID, pending.Channel, ""); err != nil {
 		return "", err
 	}
 	return "Message approved and sent.", nil
@@ -687,7 +687,7 @@ func getDefaultAgent(ws *core.Workspace) string {
 	return "opencode"
 }
 
-func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info *core.SessionInfo, message string) error {
+func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info *core.SessionInfo, message, senderID, channel, replyToMsgID string) error {
 	adapter, err := m.adapters.GetAdapter(sess.Agent)
 	if err != nil {
 		return fmt.Errorf("getting adapter for agent %q: %w", sess.Agent, err)
@@ -695,7 +695,7 @@ func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info 
 
 	// Prefer streaming path when the adapter supports it.
 	if sa, ok := adapter.(executor.StreamingAdapter); ok {
-		return m.dispatchStreaming(ctx, sess, info, sa, message)
+		return m.dispatchStreaming(ctx, sess, info, sa, message, senderID, channel, replyToMsgID)
 	}
 
 	if err := adapter.Send(ctx, *info, message); err != nil {
@@ -714,48 +714,18 @@ func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info 
 	return nil
 }
 
-// dispatchStreaming sends a message via a StreamingAdapter, drains the event
-// channel, and writes both the user message and agent response to the response
-// file. This differs from the non-streaming path where adapter.Send() writes
-// the agent message itself.
-func (m *Manager) dispatchStreaming(ctx context.Context, sess *core.Session, info *core.SessionInfo, sa executor.StreamingAdapter, message string) error {
+// dispatchStreaming sends a message via a StreamingAdapter and forwards the
+// event channel to forwardResponses() via a ResponseEvent. The caller
+// (forwardResponses) handles event consumption, delivery, and response file
+// persistence. This differs from the non-streaming path where the agent
+// response is handled inline.
+func (m *Manager) dispatchStreaming(ctx context.Context, sess *core.Session, info *core.SessionInfo, sa executor.StreamingAdapter, message, senderID, channel, replyToMsgID string) error {
 	ch, err := sa.SendStream(ctx, *info, message)
 	if err != nil {
 		return fmt.Errorf("streaming send: %w", err)
 	}
 
-	var finalText string
-	var deltaBuffer strings.Builder
-	for evt := range ch {
-		switch evt.Type {
-		case core.EventTextDelta:
-			deltaBuffer.WriteString(evt.Text)
-		case core.EventText:
-			// EventText is the authoritative final text snapshot;
-			// it overwrites any accumulated delta data.
-			finalText = evt.Text
-		case core.EventStepFinish:
-			if evt.Tokens != nil {
-				slog.Info("step finished",
-					"session_id", sess.ID,
-					"input_tokens", evt.Tokens.Input,
-					"output_tokens", evt.Tokens.Output,
-					"cost", evt.Cost,
-					"reason", evt.Reason,
-				)
-			}
-		case core.EventError:
-			return fmt.Errorf("agent error: %s", evt.Text)
-		}
-	}
-
-	// Use finalText from EventText if available, otherwise fall back to
-	// accumulated deltas.
-	if finalText == "" {
-		finalText = deltaBuffer.String()
-	}
-
-	// Write user message first, then agent response.
+	// Write user message to response file (same as before).
 	if err := executor.AppendMessage(info.ResponseFile, executor.ResponseMessage{
 		Role:      "user",
 		Content:   message,
@@ -763,15 +733,19 @@ func (m *Manager) dispatchStreaming(ctx context.Context, sess *core.Session, inf
 	}); err != nil {
 		return fmt.Errorf("append user message: %w", err)
 	}
-	if finalText != "" {
-		if err := executor.AppendMessage(info.ResponseFile, executor.ResponseMessage{
-			Role:      "agent",
-			Content:   finalText,
-			Timestamp: time.Now().UTC(),
-		}); err != nil {
-			return fmt.Errorf("append agent message: %w", err)
-		}
+
+	// Send the event channel to forwardResponses via ResponseEvent.
+	m.responseCh <- core.ResponseEvent{
+		SessionName:    info.Name,
+		SessionID:      sess.ID,
+		SenderID:       senderID,
+		Channel:        channel,
+		Events:         ch,
+		ReplyToID:      replyToMsgID,
+		AgentSessionID: info.AgentSessionID,
+		ResponseFile:   info.ResponseFile,
 	}
+
 	if err := m.store.TouchSession(ctx, sess.ID); err != nil {
 		slog.Warn("failed to touch session", "session_id", sess.ID, "error", err)
 	}
@@ -849,6 +823,31 @@ func (m *Manager) cleanupExpiredPendingConfirmations() {
 			delete(m.pending, token)
 		}
 	}
+}
+
+// AbortSession cancels in-flight generation for the session identified by the
+// agent's own session ID (e.g. opencode serve "ses_xxx"). It looks up the
+// session in the store, builds a SessionInfo, and delegates to the streaming
+// adapter's AbortStream method.
+func (m *Manager) AbortSession(ctx context.Context, agentSessionID string) error {
+	sess, err := m.store.GetSessionByAgentSessionID(ctx, agentSessionID)
+	if err != nil {
+		return fmt.Errorf("looking up session for agent session %q: %w", agentSessionID, err)
+	}
+	ws, err := m.store.GetWorkspaceByID(ctx, sess.WorkspaceID)
+	if err != nil {
+		return fmt.Errorf("looking up workspace for session %d: %w", sess.ID, err)
+	}
+	adapter, err := m.adapters.GetAdapter(sess.Agent)
+	if err != nil {
+		return fmt.Errorf("getting adapter for agent %q: %w", sess.Agent, err)
+	}
+	sa, ok := adapter.(executor.StreamingAdapter)
+	if !ok {
+		return fmt.Errorf("agent %q does not support streaming abort", sess.Agent)
+	}
+	info := m.buildSessionInfo(ws, sess)
+	return sa.AbortStream(ctx, *info)
 }
 
 func newPendingToken() (string, error) {

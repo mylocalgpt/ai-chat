@@ -272,6 +272,23 @@ func (s *Store) GetSessionByTmuxSession(ctx context.Context, tmuxSession string)
 	return sess, nil
 }
 
+// GetSessionByAgentSessionID returns the session matching the agent's own
+// session identifier (e.g. opencode serve session ID "ses_xxx").
+func (s *Store) GetSessionByAgentSessionID(ctx context.Context, agentSessionID string) (*core.Session, error) {
+	sess, err := s.scanSession(s.db.QueryRowContext(ctx,
+		`SELECT id, workspace_id, agent, slug, agent_session_id, tmux_session, status, started_at, last_activity
+		 FROM sessions WHERE agent_session_id = ?`,
+		agentSessionID,
+	))
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("session agent_session_id=%q: %w", agentSessionID, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting session by agent session ID: %w", err)
+	}
+	return sess, nil
+}
+
 func (s *Store) scanSession(row *sql.Row) (*core.Session, error) {
 	var sess core.Session
 	var tmuxSession sql.NullString

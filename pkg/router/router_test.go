@@ -92,7 +92,7 @@ type mockSessionManager struct {
 	setAgentErr           error
 }
 
-func (m *mockSessionManager) Send(context.Context, string, string, string) error {
+func (m *mockSessionManager) Send(context.Context, string, string, string, string) error {
 	m.sendCalled = true
 	return m.sendErr
 }

@@ -114,6 +114,10 @@ func (m *watcherMockStore) UpdateAgentSessionID(_ context.Context, _ int64, _ st
 	return nil
 }
 
+func (m *watcherMockStore) GetSessionByAgentSessionID(_ context.Context, _ string) (*core.Session, error) {
+	return nil, errors.New("not implemented")
+}
+
 func TestWatcher_EmitsEventOnWrite(t *testing.T) {
 	dir := t.TempDir()
 	ch := make(chan core.ResponseEvent, 10)

@@ -292,7 +292,7 @@ func (e *executorSessionManager) KillSession(ctx context.Context, sessionID int6
 }
 
 func (e *executorSessionManager) Send(ctx context.Context, sessionID int64, message string) error {
-	return e.manager.SendToSession(ctx, "mcp", "system", sessionID, message)
+	return e.manager.SendToSession(ctx, "mcp", "system", sessionID, message, "")
 }
 
 func (e *executorSessionManager) ApproveSend(ctx context.Context, pendingID string, approved bool) (string, error) {
