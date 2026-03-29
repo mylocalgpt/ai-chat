@@ -17,12 +17,21 @@ type Channel interface {
 	Send(ctx context.Context, msg OutboundMessage) error
 }
 
+// StreamResult holds the accumulated output from a streaming session,
+// including the final response text and token/cost data from step-finish events.
+type StreamResult struct {
+	Text         string
+	InputTokens  int
+	OutputTokens int
+	Cost         float64
+}
+
 // StreamingChannel extends Channel with support for streaming agent events.
 // Channels that implement this interface receive real-time progress updates
 // instead of waiting for the final response.
 type StreamingChannel interface {
 	Channel
-	SendStreaming(ctx context.Context, chatID int64, replyToID int, agentSessionID string, events <-chan AgentEvent) (string, error)
+	SendStreaming(ctx context.Context, chatID int64, replyToID int, agentSessionID string, events <-chan AgentEvent) (StreamResult, error)
 }
 
 // InboundMessage is a message received from a messaging platform.

@@ -744,6 +744,8 @@ func (m *Manager) dispatchStreaming(ctx context.Context, sess *core.Session, inf
 		ReplyToID:      replyToMsgID,
 		AgentSessionID: info.AgentSessionID,
 		ResponseFile:   info.ResponseFile,
+		SessionSlug:    info.Slug,
+		Workspace:      info.WorkspacePath,
 	}
 
 	if err := m.store.TouchSession(ctx, sess.ID); err != nil {

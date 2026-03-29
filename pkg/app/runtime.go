@@ -135,13 +135,13 @@ func forwardResponses(ctx context.Context, st messageStore, events <-chan core.R
 						drainEvents(event.Events)
 					} else {
 						replyToID, _ := strconv.Atoi(event.ReplyToID)
-						responseText, err := sc.SendStreaming(ctx, chatID, replyToID, event.AgentSessionID, event.Events)
+						result, err := sc.SendStreaming(ctx, chatID, replyToID, event.AgentSessionID, event.Events)
 						if err != nil {
 							slog.Warn("streaming delivery failed", "error", err)
 							drainEvents(event.Events)
 							continue
 						}
-						content = responseText
+						content = result.Text
 						streamed = true
 
 						if event.ResponseFile != "" {
@@ -151,6 +151,42 @@ func forwardResponses(ctx context.Context, st messageStore, events <-chan core.R
 							}); err != nil {
 								slog.Warn("failed to persist streaming response to file",
 									"path", event.ResponseFile, "error", err)
+							}
+						}
+
+						// Compute MsgIdx from response file after writing.
+						msgIdx := agentMessageIndex(event.ResponseFile)
+
+						// Route through SendResponse if channel supports it.
+						if rs, ok := channel.(core.ResponseSender); ok && content != "" {
+							params := core.ResponseParams{
+								ChatID:       chatID,
+								ReplyToID:    event.ReplyToID,
+								Content:      content,
+								SessionName:  event.SessionName,
+								SessionSlug:  event.SessionSlug,
+								MsgIdx:       msgIdx,
+								Workspace:    event.Workspace,
+								InputTokens:  result.InputTokens,
+								OutputTokens: result.OutputTokens,
+								Cost:         result.Cost,
+							}
+							if err := rs.SendResponse(ctx, params); err != nil {
+								slog.Warn("SendResponse failed, falling back to Send", "error", err)
+								_ = channel.Send(ctx, core.OutboundMessage{
+									Channel:     event.Channel,
+									RecipientID: event.SenderID,
+									Content:     content,
+								})
+							}
+						} else if content != "" {
+							// Channel does not implement ResponseSender; use plain Send.
+							if err := channel.Send(ctx, core.OutboundMessage{
+								Channel:     event.Channel,
+								RecipientID: event.SenderID,
+								Content:     content,
+							}); err != nil {
+								slog.Warn("failed to send streamed response", "error", err)
 							}
 						}
 					}
@@ -189,4 +225,26 @@ func forwardResponses(ctx context.Context, st messageStore, events <-chan core.R
 func drainEvents(events <-chan core.AgentEvent) {
 	for range events {
 	}
+}
+
+// agentMessageIndex returns the zero-indexed position of the last agent message
+// in the response file. Returns 0 if the file cannot be read or has no agent messages.
+func agentMessageIndex(responseFile string) int {
+	if responseFile == "" {
+		return 0
+	}
+	rf, err := executor.ReadResponseFile(responseFile)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, m := range rf.Messages {
+		if m.Role == "agent" {
+			count++
+		}
+	}
+	if count > 0 {
+		return count - 1
+	}
+	return 0
 }

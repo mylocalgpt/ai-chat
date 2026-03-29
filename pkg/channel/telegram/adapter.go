@@ -303,12 +303,15 @@ func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) er
 }
 
 // SendStreaming consumes a channel of agent events, showing real-time progress
-// via a ProgressReporter, accumulating response text, and sending the final
-// formatted message. It returns the final response text for persistence.
-func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, replyToID int, agentSessionID string, events <-chan core.AgentEvent) (string, error) {
+// via a ProgressReporter, and accumulating response text and token/cost data.
+// It returns a StreamResult containing the final text and accumulated metrics.
+// The caller (forwardResponses) is responsible for delivering the final message
+// via SendResponse or Send.
+func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, replyToID int, agentSessionID string, events <-chan core.AgentEvent) (core.StreamResult, error) {
 	reporter := NewProgressReporter(t.bot, chatID, replyToID, agentSessionID)
 
 	var textBuf strings.Builder
+	var result core.StreamResult
 	started := false
 	done := false
 	errored := false
@@ -322,7 +325,7 @@ func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, reply
 		select {
 		case <-ctx.Done():
 			reporter.Finish(ctx)
-			return "", ctx.Err()
+			return core.StreamResult{}, ctx.Err()
 		default:
 		}
 
@@ -349,6 +352,8 @@ func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, reply
 
 		case core.EventStepFinish:
 			if event.Tokens != nil {
+				result.InputTokens += event.Tokens.Input
+				result.OutputTokens += event.Tokens.Output
 				slog.Debug("step finished",
 					"chat_id", chatID,
 					"tokens_in", event.Tokens.Input,
@@ -356,6 +361,7 @@ func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, reply
 					"cost", event.Cost,
 				)
 			}
+			result.Cost += event.Cost
 
 		case core.EventIdle:
 			reporter.Finish(ctx)
@@ -379,24 +385,13 @@ func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, reply
 		reporter.Finish(ctx)
 	}
 
-	// Error already communicated to user; return empty string.
+	// Error already communicated to user; return empty result.
 	if errored {
-		return "", nil
+		return core.StreamResult{}, nil
 	}
 
-	finalText := textBuf.String()
-	if finalText != "" {
-		if err := t.Send(ctx, core.OutboundMessage{
-			Channel:     "telegram",
-			RecipientID: strconv.FormatInt(chatID, 10),
-			Content:     finalText,
-			ReplyToID:   strconv.Itoa(replyToID),
-		}); err != nil {
-			return finalText, fmt.Errorf("sending final response: %w", err)
-		}
-	}
-
-	return finalText, nil
+	result.Text = textBuf.String()
+	return result, nil
 }
 
 // SendResponse implements core.ResponseSender. It routes responses through

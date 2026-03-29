@@ -37,23 +37,20 @@ func TestSendStreaming_HappyPath(t *testing.T) {
 		core.AgentEvent{Type: core.EventIdle},
 	)
 
-	text, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
+	result, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
 	if err != nil {
 		t.Fatalf("SendStreaming() error: %v", err)
 	}
 
 	// EventText resets the builder, so final text should be "Hello world"
-	if text != "Hello world" {
-		t.Errorf("returned text = %q, want %q", text, "Hello world")
+	if result.Text != "Hello world" {
+		t.Errorf("returned text = %q, want %q", result.Text, "Hello world")
 	}
 
-	// Verify bot interactions:
-	// 1. SendMessage for status ("Thinking...")
-	// 2. SendChatAction (typing indicator from Send)
-	// 3. SendMessage for final response
-	// We expect at least 2 SendMessage calls: status + final response
-	if len(mb.sentMessages) < 2 {
-		t.Fatalf("expected at least 2 SendMessage calls, got %d", len(mb.sentMessages))
+	// SendStreaming no longer sends the final response itself; it only manages
+	// the progress reporter. Verify status message was created and deleted.
+	if len(mb.sentMessages) < 1 {
+		t.Fatalf("expected at least 1 SendMessage call (status), got %d", len(mb.sentMessages))
 	}
 
 	// First message is the status message
@@ -64,16 +61,6 @@ func TestSendStreaming_HappyPath(t *testing.T) {
 	// Status message should be deleted (Finish called)
 	if len(mb.deletedMessages) != 1 {
 		t.Fatalf("expected 1 DeleteMessage call, got %d", len(mb.deletedMessages))
-	}
-
-	// Final message should be sent (the last SendMessage call, after ChatAction)
-	lastMsg := mb.sentMessages[len(mb.sentMessages)-1]
-	if lastMsg.ChatID != int64(123) {
-		t.Errorf("final message chat ID = %v, want 123", lastMsg.ChatID)
-	}
-	// ReplyParameters should reference replyToID=7
-	if lastMsg.ReplyParameters == nil || lastMsg.ReplyParameters.MessageID != 7 {
-		t.Errorf("final message should reply to message 7")
 	}
 }
 
@@ -87,14 +74,14 @@ func TestSendStreaming_ErrorEvent(t *testing.T) {
 		core.AgentEvent{Type: core.EventError, Text: "something went wrong"},
 	)
 
-	text, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
+	result, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
 	if err != nil {
 		t.Fatalf("SendStreaming() error: %v (expected nil)", err)
 	}
 
 	// Error event returns empty string
-	if text != "" {
-		t.Errorf("returned text = %q, want empty", text)
+	if result.Text != "" {
+		t.Errorf("returned text = %q, want empty", result.Text)
 	}
 
 	// Status message should be deleted
@@ -117,13 +104,13 @@ func TestSendStreaming_EmptyResponse(t *testing.T) {
 		core.AgentEvent{Type: core.EventIdle},
 	)
 
-	text, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
+	result, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
 	if err != nil {
 		t.Fatalf("SendStreaming() error: %v", err)
 	}
 
-	if text != "" {
-		t.Errorf("returned text = %q, want empty", text)
+	if result.Text != "" {
+		t.Errorf("returned text = %q, want empty", result.Text)
 	}
 
 	// Status message created and deleted
@@ -144,24 +131,18 @@ func TestSendStreaming_NoEventBusy(t *testing.T) {
 		core.AgentEvent{Type: core.EventIdle},
 	)
 
-	text, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
+	result, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
 	if err != nil {
 		t.Fatalf("SendStreaming() error: %v", err)
 	}
 
-	if text != "direct text" {
-		t.Errorf("returned text = %q, want %q", text, "direct text")
+	if result.Text != "direct text" {
+		t.Errorf("returned text = %q, want %q", result.Text, "direct text")
 	}
 
 	// No status message created (no EventBusy), so no DeleteMessage
 	if len(mb.deletedMessages) != 0 {
 		t.Errorf("expected 0 DeleteMessage calls (no status to delete), got %d", len(mb.deletedMessages))
-	}
-
-	// Final response should still be sent.
-	// Send calls SendChatAction + SendMessage, so at least 1 SendMessage.
-	if len(mb.sentMessages) < 1 {
-		t.Fatalf("expected at least 1 SendMessage call for final response, got %d", len(mb.sentMessages))
 	}
 }
 
@@ -175,11 +156,11 @@ func TestSendStreaming_ContextCancellation(t *testing.T) {
 	ch := make(chan core.AgentEvent)
 
 	done := make(chan struct{})
-	var text string
+	var result core.StreamResult
 	var err error
 
 	go func() {
-		text, err = adapter.SendStreaming(ctx, 123, 7, "ses_abc", ch)
+		result, err = adapter.SendStreaming(ctx, 123, 7, "ses_abc", ch)
 		close(done)
 	}()
 
@@ -198,8 +179,8 @@ func TestSendStreaming_ContextCancellation(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected context cancellation error, got nil")
 	}
-	if text != "" {
-		t.Errorf("returned text = %q, want empty on cancellation", text)
+	if result.Text != "" {
+		t.Errorf("returned text = %q, want empty on cancellation", result.Text)
 	}
 }
 
@@ -218,16 +199,25 @@ func TestSendStreaming_StepFinishLogsOnly(t *testing.T) {
 		core.AgentEvent{Type: core.EventIdle},
 	)
 
-	text, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
+	result, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
 	if err != nil {
 		t.Fatalf("SendStreaming() error: %v", err)
 	}
 
-	if text != "result" {
-		t.Errorf("returned text = %q, want %q", text, "result")
+	if result.Text != "result" {
+		t.Errorf("returned text = %q, want %q", result.Text, "result")
 	}
 
-	// StepFinish should not trigger any extra bot calls beyond Start/Finish/Send
+	// Verify token accumulation.
+	if result.InputTokens != 100 {
+		t.Errorf("InputTokens = %d, want 100", result.InputTokens)
+	}
+	if result.OutputTokens != 50 {
+		t.Errorf("OutputTokens = %d, want 50", result.OutputTokens)
+	}
+	if result.Cost != 0.003 {
+		t.Errorf("Cost = %f, want 0.003", result.Cost)
+	}
 }
 
 func TestSendStreaming_EventTextResetsBuilder(t *testing.T) {
@@ -242,14 +232,14 @@ func TestSendStreaming_EventTextResetsBuilder(t *testing.T) {
 		core.AgentEvent{Type: core.EventIdle},
 	)
 
-	text, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
+	result, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
 	if err != nil {
 		t.Fatalf("SendStreaming() error: %v", err)
 	}
 
 	// EventText should have reset the builder
-	if text != "authoritative full text" {
-		t.Errorf("returned text = %q, want %q", text, "authoritative full text")
+	if result.Text != "authoritative full text" {
+		t.Errorf("returned text = %q, want %q", result.Text, "authoritative full text")
 	}
 }
 
@@ -266,13 +256,13 @@ func TestSendStreaming_DrainAfterIdle(t *testing.T) {
 		core.AgentEvent{Type: core.EventText, Text: "SHOULD NOT APPEAR EITHER"},
 	)
 
-	text, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
+	result, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
 	if err != nil {
 		t.Fatalf("SendStreaming() error: %v", err)
 	}
 
-	if text != "before idle" {
-		t.Errorf("returned text = %q, want %q", text, "before idle")
+	if result.Text != "before idle" {
+		t.Errorf("returned text = %q, want %q", result.Text, "before idle")
 	}
 }
 
@@ -286,14 +276,14 @@ func TestSendStreaming_ErrorEventNoFinalSend(t *testing.T) {
 		core.AgentEvent{Type: core.EventError, Text: "agent crashed"},
 	)
 
-	text, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
+	result, err := adapter.SendStreaming(context.Background(), 123, 7, "ses_abc", events)
 	if err != nil {
 		t.Fatalf("SendStreaming() error: %v", err)
 	}
 
 	// Should return empty text on error
-	if text != "" {
-		t.Errorf("returned text = %q, want empty on error", text)
+	if result.Text != "" {
+		t.Errorf("returned text = %q, want empty on error", result.Text)
 	}
 
 	// Verify the error message was sent. Count messages:
@@ -326,19 +316,13 @@ func TestSendStreaming_FinalResponseReplyToID(t *testing.T) {
 		core.AgentEvent{Type: core.EventIdle},
 	)
 
-	_, err := adapter.SendStreaming(context.Background(), 456, 99, "ses_xyz", events)
+	result, err := adapter.SendStreaming(context.Background(), 456, 99, "ses_xyz", events)
 	if err != nil {
 		t.Fatalf("SendStreaming() error: %v", err)
 	}
 
-	// Verify the final message was sent to the correct chat.
-	found := false
-	for _, msg := range mb.sentMessages {
-		if msg.ChatID == int64(456) {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("no message sent to chat 456")
+	// Verify text was accumulated correctly.
+	if result.Text != "hello" {
+		t.Errorf("returned text = %q, want %q", result.Text, "hello")
 	}
 }

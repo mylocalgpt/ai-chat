@@ -114,6 +114,8 @@ func runStart(args []string) {
 	tg.SetRouter(runtime.Router)
 	tg.SetShutdownFunc(cancel)
 	tg.SetAbortFunc(runtime.SessionManager.AbortSession)
+	tg.SetSummarizer(telegram.NewSummarizer(runtime.ServerManager))
+	tg.SetResponsesDir(cfg.ResponsesDir)
 	wg := app.StartBackground(ctx, st, runtime.SessionManager, tg)
 
 	// Start Telegram long polling.
