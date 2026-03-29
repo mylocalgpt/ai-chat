@@ -421,14 +421,15 @@ func (t *TelegramAdapter) SendResponse(ctx context.Context, params core.Response
 	typingCtx, typingCancel := context.WithCancel(ctx)
 	defer typingCancel()
 
+	// Send one immediately so user sees feedback before summarization begins.
+	_, _ = t.bot.SendChatAction(ctx, &bot.SendChatActionParams{
+		ChatID: params.ChatID,
+		Action: models.ChatActionTyping,
+	})
+
 	go func() {
 		ticker := time.NewTicker(4 * time.Second)
 		defer ticker.Stop()
-		// Send one immediately so user sees feedback right away.
-		_, _ = t.bot.SendChatAction(typingCtx, &bot.SendChatActionParams{
-			ChatID: params.ChatID,
-			Action: models.ChatActionTyping,
-		})
 		for {
 			select {
 			case <-typingCtx.Done():

@@ -329,7 +329,7 @@ func TestSendResponseTypingIndicator(t *testing.T) {
 	mb.mu.Unlock()
 
 	if actionCount == 0 {
-		t.Error("expected at least 1 SendChatAction call for typing indicator")
+		t.Fatal("expected at least 1 SendChatAction call for typing indicator")
 	}
 
 	// Verify the first action was for chat 222 with typing action.
