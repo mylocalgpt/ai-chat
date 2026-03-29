@@ -3,7 +3,9 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 )
 
 // migrations defines the fresh schema bootstrap for resettable databases.
@@ -24,6 +26,17 @@ func Migrate(db *sql.DB) error {
 	current, err := schemaVersion(db)
 	if err != nil {
 		return fmt.Errorf("reading schema version: %w", err)
+	}
+
+	needsReset, err := needsSchemaReset(db, current)
+	if err != nil {
+		return fmt.Errorf("checking schema compatibility: %w", err)
+	}
+	if needsReset {
+		if err := resetSchema(db); err != nil {
+			return fmt.Errorf("resetting incompatible schema: %w", err)
+		}
+		current = 0
 	}
 
 	for i := current; i < len(migrations); i++ {
@@ -52,6 +65,148 @@ func Migrate(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+var requiredRuntimeTables = []string{
+	"workspaces",
+	"messages",
+	"sessions",
+	"active_workspaces",
+	"active_workspace_sessions",
+}
+
+func needsSchemaReset(db *sql.DB, current int) (bool, error) {
+	if current > len(migrations) {
+		return true, nil
+	}
+
+	tables, err := listTables(db)
+	if err != nil {
+		return false, err
+	}
+
+	haveTable := make(map[string]bool, len(tables))
+	haveNonMetaTables := false
+	for _, table := range tables {
+		haveTable[table] = true
+		if table != "_meta" {
+			haveNonMetaTables = true
+		}
+	}
+
+	missingRequired := false
+	for _, table := range requiredRuntimeTables {
+		if !haveTable[table] {
+			missingRequired = true
+			break
+		}
+	}
+
+	if !missingRequired {
+		return false, nil
+	}
+
+	// A brand new database only has _meta at this point and should run the
+	// current bootstrap normally. Any populated but incomplete app schema is
+	// treated as incompatible and rebuilt from scratch.
+	return haveNonMetaTables, nil
+}
+
+func resetSchema(db *sql.DB) error {
+	tables, err := listTables(db)
+	if err != nil {
+		return err
+	}
+
+	ordered := orderTablesForDrop(tables)
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning schema reset: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, table := range ordered {
+		if _, err := tx.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS "%s"`, escapeIdent(table))); err != nil {
+			return fmt.Errorf("dropping table %q: %w", table, err)
+		}
+	}
+
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS _meta (
+		key TEXT PRIMARY KEY,
+		value TEXT
+	)`); err != nil {
+		return fmt.Errorf("recreating _meta table: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM _meta`); err != nil {
+		return fmt.Errorf("clearing _meta table: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing schema reset: %w", err)
+	}
+
+	return nil
+}
+
+func listTables(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		return nil, fmt.Errorf("listing tables: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scanning table name: %w", err)
+		}
+		tables = append(tables, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating table names: %w", err)
+	}
+
+	return tables, nil
+}
+
+func orderTablesForDrop(tables []string) []string {
+	priority := map[string]int{
+		"active_workspace_sessions": 0,
+		"active_workspaces":         1,
+		"messages":                  2,
+		"sessions":                  3,
+		"user_context":              4,
+		"model_config":              5,
+		"workspaces":                6,
+		"_meta":                     7,
+	}
+
+	ordered := append([]string(nil), tables...)
+	sort.Slice(ordered, func(i, j int) bool {
+		pi, okI := priority[ordered[i]]
+		pj, okJ := priority[ordered[j]]
+		switch {
+		case okI && okJ:
+			if pi == pj {
+				return ordered[i] < ordered[j]
+			}
+			return pi < pj
+		case okI:
+			return true
+		case okJ:
+			return false
+		default:
+			return ordered[i] < ordered[j]
+		}
+	})
+
+	return ordered
+}
+
+func escapeIdent(name string) string {
+	return strings.ReplaceAll(name, `"`, `""`)
 }
 
 // schemaVersion reads the current schema version from the _meta table.
