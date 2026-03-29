@@ -14,12 +14,14 @@ import (
 type callbackHandler struct {
 	router       Router
 	allowedUsers map[int64]bool
+	abortFunc    func(ctx context.Context, agentSessionID string) error
 }
 
-func newCallbackHandler(r Router, allowedUsers map[int64]bool) *callbackHandler {
+func newCallbackHandler(r Router, allowedUsers map[int64]bool, abortFunc func(ctx context.Context, agentSessionID string) error) *callbackHandler {
 	return &callbackHandler{
 		router:       r,
 		allowedUsers: allowedUsers,
+		abortFunc:    abortFunc,
 	}
 }
 
@@ -72,6 +74,8 @@ func (h *callbackHandler) handleCallback(ctx context.Context, b telegramCallback
 		h.handleSessionCallback(ctx, b, chatID, messageID, rest)
 	case "sec":
 		h.handleSecurityCallback(ctx, b, chatID, messageID, rest)
+	case "stop":
+		h.handleStopCallback(ctx, b, chatID, messageID, rest)
 	default:
 		slog.Warn("unknown callback prefix", "prefix", prefix)
 	}
@@ -121,6 +125,33 @@ func (h *callbackHandler) handleSessionCallback(ctx context.Context, b telegramC
 		return
 	}
 	h.renderCallbackResult(ctx, b, chatID, messageID, result)
+}
+
+func (h *callbackHandler) handleStopCallback(ctx context.Context, b telegramCallbackBot, chatID int64, messageID int, agentSessionID string) {
+	if h.abortFunc == nil {
+		_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:    chatID,
+			MessageID: messageID,
+			Text:      "Stop not available.",
+		})
+		return
+	}
+
+	if err := h.abortFunc(ctx, agentSessionID); err != nil {
+		slog.Error("failed to abort agent session", "agent_session_id", agentSessionID, "error", err)
+		_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:    chatID,
+			MessageID: messageID,
+			Text:      "Failed to stop.",
+		})
+		return
+	}
+
+	_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Text:      "Stopping...",
+	})
 }
 
 func (h *callbackHandler) handleSecurityCallback(ctx context.Context, b telegramCallbackBot, chatID int64, messageID int, data string) {

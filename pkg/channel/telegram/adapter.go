@@ -103,7 +103,7 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 	adapter := &TelegramAdapter{
 		allowedUsers:    allowed,
 		store:           st,
-		callbackHandler: newCallbackHandler(nil, allowed),
+		callbackHandler: newCallbackHandler(nil, allowed, nil),
 	}
 
 	b, err := bot.New(cfg.BotToken,
@@ -135,6 +135,12 @@ func (t *TelegramAdapter) SetBot(b telegramBot) {
 // when a polling conflict is detected at runtime.
 func (t *TelegramAdapter) SetShutdownFunc(fn context.CancelFunc) {
 	t.shutdownFunc = fn
+}
+
+// SetAbortFunc sets the function called to abort an agent session when a user
+// presses the "Stop" inline keyboard button.
+func (t *TelegramAdapter) SetAbortFunc(fn func(ctx context.Context, agentSessionID string) error) {
+	t.callbackHandler.abortFunc = fn
 }
 
 func (t *TelegramAdapter) handleBotError(err error) {
