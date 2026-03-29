@@ -12,7 +12,6 @@ func TestConfigShowRedactsSecrets(t *testing.T) {
 	ms := newMockStore()
 	cfg := &MCPConfig{
 		TelegramToken: "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz",
-		OpenRouterKey: "sk-or-1234567890abcdef",
 		ResponsesDir:  "/tmp/responses",
 		AllowedUsers:  []int64{123, 456},
 		BinaryPath:    "/usr/local/bin/ai-chat",
@@ -32,9 +31,6 @@ func TestConfigShowRedactsSecrets(t *testing.T) {
 
 	if output.TelegramToken == "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz" {
 		t.Error("telegram token should be redacted")
-	}
-	if output.OpenRouterKey == "sk-or-1234567890abcdef" {
-		t.Error("openrouter key should be redacted")
 	}
 	if output.TelegramToken == "[not set]" {
 		t.Error("telegram token should show [set] or partial, not [not set]")
@@ -59,9 +55,6 @@ func TestConfigShowEmptySecrets(t *testing.T) {
 
 	if output.TelegramToken != "[not set]" {
 		t.Errorf("expected '[not set]', got %q", output.TelegramToken)
-	}
-	if output.OpenRouterKey != "[not set]" {
-		t.Errorf("expected '[not set]', got %q", output.OpenRouterKey)
 	}
 }
 

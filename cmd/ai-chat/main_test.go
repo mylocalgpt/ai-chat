@@ -39,11 +39,6 @@ func TestStartIntegration(t *testing.T) {
 		t.Errorf("responses_dir = %q, want %q", cfg.ResponsesDir, responsesDir)
 	}
 
-	// OpenRouter should be empty but not cause an error.
-	if cfg.OpenRouter.APIKey != "" {
-		t.Errorf("openrouter.api_key = %q, want empty", cfg.OpenRouter.APIKey)
-	}
-
 	// Open and migrate DB.
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {

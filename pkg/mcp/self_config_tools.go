@@ -16,7 +16,6 @@ type ConfigShowInput struct{}
 
 type ConfigShowOutput struct {
 	TelegramToken string  `json:"telegram_token"`
-	OpenRouterKey string  `json:"openrouter_key"`
 	ResponsesDir  string  `json:"responses_dir"`
 	AllowedUsers  []int64 `json:"allowed_users"`
 	BinaryPath    string  `json:"binary_path"`
@@ -62,7 +61,6 @@ func (s *Server) registerSelfConfigTools() {
 func (s *Server) handleConfigShow(ctx context.Context, _ *gomcp.CallToolRequest, _ ConfigShowInput) (*gomcp.CallToolResult, any, error) {
 	output := ConfigShowOutput{
 		TelegramToken: redactSecret(s.cfg.TelegramToken),
-		OpenRouterKey: redactSecret(s.cfg.OpenRouterKey),
 		ResponsesDir:  s.cfg.ResponsesDir,
 		AllowedUsers:  s.cfg.AllowedUsers,
 		BinaryPath:    s.cfg.BinaryPath,

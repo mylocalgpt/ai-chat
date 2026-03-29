@@ -23,9 +23,6 @@ func validJSON() string {
 			"bot_token": "test-token-123",
 			"allowed_users": [111, 222]
 		},
-		"openrouter": {
-			"api_key": "or-key-456"
-		},
 		"db_path": "/tmp/test.db",
 		"log_dir": "/tmp/logs/",
 		"responses_dir": "/tmp/responses/"
@@ -48,9 +45,6 @@ func TestLoad(t *testing.T) {
 				}
 				if len(cfg.Telegram.AllowedUsers) != 2 {
 					t.Errorf("allowed_users len = %d, want 2", len(cfg.Telegram.AllowedUsers))
-				}
-				if cfg.OpenRouter.APIKey != "or-key-456" {
-					t.Errorf("api_key = %q, want %q", cfg.OpenRouter.APIKey, "or-key-456")
 				}
 				if cfg.DBPath != "/tmp/test.db" {
 					t.Errorf("db_path = %q, want %q", cfg.DBPath, "/tmp/test.db")
@@ -168,9 +162,6 @@ func TestStringRedactsSecrets(t *testing.T) {
 			BotToken:     "super-secret-token",
 			AllowedUsers: []int64{111, 222},
 		},
-		OpenRouter: OpenRouterConfig{
-			APIKey: "secret-api-key",
-		},
 		DBPath:       "/home/user/.ai-chat/state.db",
 		LogDir:       "/home/user/.ai-chat/logs/",
 		ResponsesDir: "/home/user/.ai-chat/responses/",
@@ -180,9 +171,6 @@ func TestStringRedactsSecrets(t *testing.T) {
 
 	if strings.Contains(s, "super-secret-token") {
 		t.Error("String() should not contain the actual bot token")
-	}
-	if strings.Contains(s, "secret-api-key") {
-		t.Error("String() should not contain the actual API key")
 	}
 	if !strings.Contains(s, "[set]") {
 		t.Error("String() should contain [set] for populated secrets")
@@ -214,19 +202,7 @@ func TestValidate(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "valid with openrouter",
-			cfg: Config{
-				Telegram: TelegramConfig{
-					BotToken:     "tok",
-					AllowedUsers: []int64{1},
-				},
-				OpenRouter: OpenRouterConfig{
-					APIKey: "or-key",
-				},
-			},
-		},
-		{
-			name: "valid without openrouter",
+			name: "valid config",
 			cfg: Config{
 				Telegram: TelegramConfig{
 					BotToken:     "tok",

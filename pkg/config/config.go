@@ -10,23 +10,17 @@ import (
 
 // Config holds the application configuration loaded from a JSON file.
 type Config struct {
-	Telegram      TelegramConfig   `json:"telegram"`
-	OpenRouter    OpenRouterConfig `json:"openrouter"`
-	DBPath        string           `json:"db_path"`
-	LogDir        string           `json:"log_dir"`
-	LogRetainDays int              `json:"log_retain_days"`
-	ResponsesDir  string           `json:"responses_dir"`
+	Telegram      TelegramConfig `json:"telegram"`
+	DBPath        string         `json:"db_path"`
+	LogDir        string         `json:"log_dir"`
+	LogRetainDays int            `json:"log_retain_days"`
+	ResponsesDir  string         `json:"responses_dir"`
 }
 
 // TelegramConfig holds Telegram bot credentials and access control.
 type TelegramConfig struct {
 	BotToken     string  `json:"bot_token"`
 	AllowedUsers []int64 `json:"allowed_users"`
-}
-
-// OpenRouterConfig holds OpenRouter API credentials.
-type OpenRouterConfig struct {
-	APIKey string `json:"api_key"`
 }
 
 // Load reads and parses a JSON config file. If path is empty, it checks
@@ -157,15 +151,6 @@ func (c *Config) String() string {
 	b.WriteByte('\n')
 
 	fmt.Fprintf(&b, "telegram.allowed_users: %d user(s)\n", len(c.Telegram.AllowedUsers))
-
-	b.WriteString("openrouter.api_key: ")
-	if c.OpenRouter.APIKey != "" {
-		b.WriteString("[set]")
-	} else {
-		b.WriteString("[not set]")
-	}
-	b.WriteByte('\n')
-
 	fmt.Fprintf(&b, "db_path: %s\n", c.DBPath)
 	fmt.Fprintf(&b, "log_dir: %s\n", c.LogDir)
 	fmt.Fprintf(&b, "responses_dir: %s", c.ResponsesDir)

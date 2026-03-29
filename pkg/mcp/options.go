@@ -5,7 +5,6 @@ type MCPConfig struct {
 	ResponsesDir  string
 	BinaryPath    string
 	TelegramToken string
-	OpenRouterKey string
 }
 
 type Option func(*Server)
