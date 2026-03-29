@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
@@ -393,5 +396,109 @@ func TestConsumeEvents_StopsOnIdle(t *testing.T) {
 	}
 	if events[1].Type != core.EventIdle {
 		t.Errorf("second event type = %q, want %q", events[1].Type, core.EventIdle)
+	}
+}
+
+func TestDeleteSession(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantErr    bool
+	}{
+		{
+			name:       "200 OK",
+			statusCode: http.StatusOK,
+			wantErr:    false,
+		},
+		{
+			name:       "204 No Content",
+			statusCode: http.StatusNoContent,
+			wantErr:    false,
+		},
+		{
+			name:       "404 Not Found returns error",
+			statusCode: http.StatusNotFound,
+			wantErr:    true,
+		},
+		{
+			name:       "500 Internal Server Error returns error",
+			statusCode: http.StatusInternalServerError,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotMethod string
+			var gotPath string
+
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod = r.Method
+				gotPath = r.URL.Path
+				w.WriteHeader(tt.statusCode)
+			}))
+			defer ts.Close()
+
+			handle := &ServerHandle{
+				URL:       ts.URL,
+				Workspace: "/tmp/test",
+				Client:    &http.Client{Timeout: 5 * time.Second},
+			}
+
+			err := handle.DeleteSession(context.Background(), "ses_abc123")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("DeleteSession() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if gotMethod != http.MethodDelete {
+				t.Errorf("method = %q, want DELETE", gotMethod)
+			}
+			if gotPath != "/session/ses_abc123" {
+				t.Errorf("path = %q, want /session/ses_abc123", gotPath)
+			}
+		})
+	}
+}
+
+func TestDeleteSession_SetsWorkspaceHeader(t *testing.T) {
+	var gotHeader string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("x-opencode-directory")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	handle := &ServerHandle{
+		URL:       ts.URL,
+		Workspace: "/home/user/project",
+		Client:    &http.Client{Timeout: 5 * time.Second},
+	}
+
+	err := handle.DeleteSession(context.Background(), "ses_xyz")
+	if err != nil {
+		t.Fatalf("DeleteSession() error = %v", err)
+	}
+	if gotHeader != "/home/user/project" {
+		t.Errorf("x-opencode-directory = %q, want %q", gotHeader, "/home/user/project")
+	}
+}
+
+func TestRegister(t *testing.T) {
+	mgr := NewServerManager()
+
+	handle := &ServerHandle{
+		URL:       "http://localhost:19100",
+		Workspace: "/tmp/test",
+		Client:    &http.Client{Timeout: 5 * time.Second},
+	}
+
+	mgr.Register("/tmp/test", handle)
+
+	got, ok := mgr.Get("/tmp/test")
+	if !ok {
+		t.Fatal("Get() returned false after Register")
+	}
+	if got != handle {
+		t.Error("Get() returned different handle than was registered")
 	}
 }

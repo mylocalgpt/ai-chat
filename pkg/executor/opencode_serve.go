@@ -257,6 +257,26 @@ func (h *ServerHandle) Abort(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// DeleteSession removes an ephemeral session from the opencode serve instance.
+func (h *ServerHandle) DeleteSession(ctx context.Context, sessionID string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, h.URL+"/session/"+sessionID, nil)
+	if err != nil {
+		return fmt.Errorf("delete session: build request: %w", err)
+	}
+	req.Header.Set("x-opencode-directory", h.Workspace)
+
+	resp, err := h.Client.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete session: request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("delete session: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // OpenCodeServeAdapter
 // ---------------------------------------------------------------------------

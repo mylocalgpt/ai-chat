@@ -290,6 +290,15 @@ func (sm *ServerManager) Get(workspace string) (*ServerHandle, bool) {
 	return h, ok
 }
 
+// Register adds a pre-configured ServerHandle for a workspace. This is
+// primarily useful for testing, where the handle points at a mock HTTP server
+// instead of a real opencode serve process.
+func (sm *ServerManager) Register(workspace string, handle *ServerHandle) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.servers[workspace] = handle
+}
+
 // StartReaper spawns a background goroutine that periodically stops idle servers.
 // Returns a cancel function to stop the reaper.
 func (sm *ServerManager) StartReaper(interval, maxIdle time.Duration) context.CancelFunc {
