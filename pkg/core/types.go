@@ -160,6 +160,27 @@ type AgentEvent struct {
 	Reason     string
 }
 
+// ResponseSender sends a formatted response through a channel, handling
+// summarization and document attachment for long content.
+type ResponseSender interface {
+	SendResponse(ctx context.Context, params ResponseParams) error
+}
+
+// ResponseParams contains everything needed to deliver a response to the user,
+// including content, metadata for document filenames, and token usage.
+type ResponseParams struct {
+	ChatID       int64
+	ReplyToID    string
+	Content      string
+	SessionName  string
+	SessionSlug  string
+	MsgIdx       int
+	Workspace    string
+	InputTokens  int
+	OutputTokens int
+	Cost         float64
+}
+
 // ResponseEvent represents a response from an agent session.
 type ResponseEvent struct {
 	SessionName    string
@@ -171,4 +192,10 @@ type ResponseEvent struct {
 	ReplyToID      string            // original user message ID for reply threading
 	AgentSessionID string            // opencode session ID (ses_xxx) for stop button
 	ResponseFile   string            // path to response JSON for persistence
+	SessionSlug    string            // short slug for filenames
+	MsgIdx         int               // zero-indexed position among agent messages
+	Workspace      string            // workspace path (needed by summarizer)
+	InputTokens    int               // from step-finish event
+	OutputTokens   int               // from step-finish event
+	Cost           float64           // from step-finish event
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -18,6 +19,7 @@ import (
 
 var _ core.Channel = (*TelegramAdapter)(nil)
 var _ core.StreamingChannel = (*TelegramAdapter)(nil)
+var _ core.ResponseSender = (*TelegramAdapter)(nil)
 
 type telegramBot interface {
 	GetMe(ctx context.Context) (*models.User, error)
@@ -87,11 +89,17 @@ type TelegramAdapterConfig struct {
 	AllowedUsers []int64
 }
 
+const (
+	shortThreshold = 8000  // runes - below this, send directly
+	longThreshold  = 20000 // runes - above this, auto-attach document
+)
+
 type TelegramAdapter struct {
 	bot          telegramBot
 	allowedUsers map[int64]bool
 	router       Router
 	store        *store.Store
+	summarizer   *Summarizer
 	cancel       context.CancelFunc
 	shutdownFunc context.CancelFunc
 	running      atomic.Bool
@@ -134,6 +142,10 @@ func (t *TelegramAdapter) SetRouter(r Router) {
 
 func (t *TelegramAdapter) SetBot(b telegramBot) {
 	t.bot = b
+}
+
+func (t *TelegramAdapter) SetSummarizer(s *Summarizer) {
+	t.summarizer = s
 }
 
 // SetShutdownFunc sets the function called to trigger full application shutdown
@@ -378,6 +390,114 @@ func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, reply
 	}
 
 	return finalText, nil
+}
+
+// SendResponse implements core.ResponseSender. It routes responses through
+// short, medium, or long paths based on content length in runes.
+//
+// Short (<=8,000 runes): formats as HTML and sends directly via Send().
+// Medium (8,001-20,000 runes): summarizes via AI, sends summary with
+//
+//	"Show full output" inline keyboard button.
+//
+// Long (>20,000 runes): same as medium, plus auto-attaches the full
+//
+//	content as a document file.
+func (t *TelegramAdapter) SendResponse(ctx context.Context, params core.ResponseParams) error {
+	contentLen := utf8.RuneCountInString(params.Content)
+
+	// Short path: send directly via existing Send().
+	if contentLen <= shortThreshold {
+		// TODO: append token footer once Phase 5 provides formatTokenFooter
+		return t.Send(ctx, core.OutboundMessage{
+			Channel:     "telegram",
+			RecipientID: strconv.FormatInt(params.ChatID, 10),
+			Content:     params.Content,
+			ReplyToID:   params.ReplyToID,
+		})
+	}
+
+	// Long path: typing indicator + summarization.
+	typingCtx, typingCancel := context.WithCancel(ctx)
+	defer typingCancel()
+
+	go func() {
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		// Send one immediately so user sees feedback right away.
+		_, _ = t.bot.SendChatAction(typingCtx, &bot.SendChatActionParams{
+			ChatID: params.ChatID,
+			Action: models.ChatActionTyping,
+		})
+		for {
+			select {
+			case <-typingCtx.Done():
+				return
+			case <-ticker.C:
+				_, _ = t.bot.SendChatAction(typingCtx, &bot.SendChatActionParams{
+					ChatID: params.ChatID,
+					Action: models.ChatActionTyping,
+				})
+			}
+		}
+	}()
+
+	// Summarize content.
+	var summary string
+	if t.summarizer != nil {
+		var err error
+		summary, err = t.summarizer.Summarize(ctx, params.Content, params.Workspace)
+		if err != nil {
+			slog.Warn("summarization failed, using fallback", "error", err)
+			summary = fallbackSummary(params.Content, 2000)
+		}
+	} else {
+		summary = fallbackSummary(params.Content, 2000)
+	}
+
+	// Very long content: auto-attach document.
+	if contentLen > longThreshold {
+		filename := documentFilename(params.SessionName, params.MsgIdx)
+		caption := truncateCaption(summary, 200)
+		if err := SendDocumentAttachment(ctx, t.bot, params.ChatID, params.Content, filename, caption); err != nil {
+			slog.Error("failed to send document attachment", "chat_id", params.ChatID, "error", err)
+			// Continue to send the summary message even if doc upload fails.
+		}
+	}
+
+	// TODO: append token footer once Phase 5 provides formatTokenFooter
+
+	// Format and send summary with "Show full output" button.
+	formatted := FormatHTML(summary)
+	keyboard := ShowFullKeyboard(params.SessionName, params.MsgIdx)
+
+	sendParams := &bot.SendMessageParams{
+		ChatID:    params.ChatID,
+		Text:      formatted,
+		ParseMode: models.ParseModeHTML,
+		LinkPreviewOptions: &models.LinkPreviewOptions{
+			IsDisabled: bot.True(),
+		},
+		ReplyMarkup: keyboard,
+	}
+
+	if params.ReplyToID != "" {
+		id, err := strconv.Atoi(params.ReplyToID)
+		if err == nil {
+			sendParams.ReplyParameters = &models.ReplyParameters{
+				MessageID: id,
+			}
+		}
+	}
+
+	typingCancel() // Stop typing indicator before sending.
+
+	_, err := t.bot.SendMessage(ctx, sendParams)
+	if err != nil {
+		return fmt.Errorf("sending summary message to %d: %w", params.ChatID, err)
+	}
+
+	return nil
 }
 
 func (t *TelegramAdapter) renderResult(ctx context.Context, recipientID, replyToID string, result router.Result) error {

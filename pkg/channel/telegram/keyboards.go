@@ -70,3 +70,13 @@ func formatAge(t time.Time) string {
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
 }
+
+// ShowFullKeyboard returns an inline keyboard with a "Show full output" button.
+// The callback data format is "full:{sessionName}:{msgIdx}".
+func ShowFullKeyboard(sessionName string, msgIdx int) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{
+		InlineKeyboard: [][]models.InlineKeyboardButton{
+			{{Text: "Show full output", CallbackData: fmt.Sprintf("full:%s:%d", sessionName, msgIdx)}},
+		},
+	}
+}
