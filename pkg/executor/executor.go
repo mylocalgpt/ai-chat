@@ -130,16 +130,16 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 
 	info := e.buildSessionInfo(ws, sess)
 
+	if err := adapter.Send(ctx, info, message); err != nil {
+		return "", fmt.Errorf("executor: adapter send: %w", err)
+	}
+
 	if err := AppendMessage(info.ResponseFile, ResponseMessage{
 		Role:      "user",
 		Content:   message,
 		Timestamp: time.Now().UTC(),
 	}); err != nil {
 		return "", fmt.Errorf("executor: append user message: %w", err)
-	}
-
-	if err := adapter.Send(ctx, info, message); err != nil {
-		return "", fmt.Errorf("executor: adapter send: %w", err)
 	}
 
 	response, err := LatestAgentMessage(info.ResponseFile)

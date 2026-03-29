@@ -678,15 +678,15 @@ func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info 
 	if err != nil {
 		return fmt.Errorf("getting adapter for agent %q: %w", sess.Agent, err)
 	}
+	if err := adapter.Send(ctx, *info, message); err != nil {
+		return fmt.Errorf("adapter send: %w", err)
+	}
 	if err := executor.AppendMessage(info.ResponseFile, executor.ResponseMessage{
 		Role:      "user",
 		Content:   message,
 		Timestamp: time.Now().UTC(),
 	}); err != nil {
 		return fmt.Errorf("append user message: %w", err)
-	}
-	if err := adapter.Send(ctx, *info, message); err != nil {
-		return fmt.Errorf("adapter send: %w", err)
 	}
 	if err := m.store.TouchSession(ctx, sess.ID); err != nil {
 		slog.Warn("failed to touch session", "session_id", sess.ID, "error", err)

@@ -86,20 +86,28 @@ func runStdio() {
 	var backgroundWG interface{ Wait() }
 	if tg != nil {
 		backgroundWG = app.StartBackground(ctx, st, manager, tg)
+		if err := tg.Start(ctx); err != nil {
+			slog.Error("failed to start telegram adapter", "error", err)
+			shutdownStdioBackground(cancel, backgroundWG, nil)
+			os.Exit(1)
+		}
 	} else {
 		backgroundWG = app.StartManagerBackground(ctx, manager)
 	}
 
 	err = srv.Run(ctx)
-	shutdownStdioBackground(cancel, backgroundWG)
+	shutdownStdioBackground(cancel, backgroundWG, tg)
 	if err != nil {
 		slog.Error("mcp server exited with error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func shutdownStdioBackground(cancel context.CancelFunc, backgroundWG interface{ Wait() }) {
+func shutdownStdioBackground(cancel context.CancelFunc, backgroundWG interface{ Wait() }, tg interface{ Stop() error }) {
 	cancel()
+	if tg != nil {
+		_ = tg.Stop()
+	}
 	if backgroundWG != nil {
 		backgroundWG.Wait()
 	}

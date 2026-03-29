@@ -296,3 +296,32 @@ func TestExecuteAdapterRespawnsDeadSession(t *testing.T) {
 		t.Error("adapter should have been spawned again")
 	}
 }
+
+func TestExecuteDoesNotPersistUndeliveredPrompt(t *testing.T) {
+	tmx := newMockTmux()
+	st := newMockStore()
+	reg := NewHarnessRegistry(NewTmux())
+	adapter := &mockAdapter{name: "test-adapter", alive: true, sendErr: errors.New("send failed")}
+	reg.RegisterAdapter("test-adapter", adapter)
+
+	tmpDir := t.TempDir()
+	exec := NewExecutor(st, tmx, reg, tmpDir)
+
+	ws := core.Workspace{ID: 1, Name: "proj", Path: "/tmp"}
+	_, err := exec.Execute(context.Background(), ws, "test-adapter", "hello")
+	if err == nil {
+		t.Fatal("expected send error")
+	}
+
+	if len(st.sessions) != 1 {
+		t.Fatalf("expected created session, got %d", len(st.sessions))
+	}
+	responsePath := ResponseFilePath(tmpDir, st.sessions[0].TmuxSession)
+	rf, err := ReadResponseFile(responsePath)
+	if err != nil {
+		t.Fatalf("ReadResponseFile: %v", err)
+	}
+	if len(rf.Messages) != 0 {
+		t.Fatalf("expected no persisted messages after failed send, got %+v", rf.Messages)
+	}
+}

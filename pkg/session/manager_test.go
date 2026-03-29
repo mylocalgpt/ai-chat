@@ -127,6 +127,7 @@ type mockAdapter struct {
 	sendErr    error
 	stopErr    error
 	stopCalled bool
+	sent       []string
 }
 
 func (m *mockAdapter) Name() string {
@@ -137,7 +138,8 @@ func (m *mockAdapter) Spawn(_ context.Context, _ core.SessionInfo) error {
 	return m.spawnErr
 }
 
-func (m *mockAdapter) Send(_ context.Context, _ core.SessionInfo, _ string) error {
+func (m *mockAdapter) Send(_ context.Context, _ core.SessionInfo, message string) error {
+	m.sent = append(m.sent, message)
 	return m.sendErr
 }
 
@@ -765,5 +767,36 @@ func TestHandleSecurityDecisionUnauthorizedAttemptDoesNotConsumeToken(t *testing
 	}
 	if len(rf.Messages) != 1 || rf.Messages[0].Role != "user" {
 		t.Fatalf("unexpected messages after authorized approval: %+v", rf.Messages)
+	}
+}
+
+func TestSendDoesNotPersistUndeliveredPrompt(t *testing.T) {
+	responsesDir := filepath.Join(t.TempDir(), "responses")
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		workspace:       &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()},
+		session:         &core.Session{ID: 42, WorkspaceID: 1, Agent: "opencode", TmuxSession: "ai-chat-lab-a3f2", Slug: "a3f2"},
+	}
+	adapter := &mockAdapter{name: "opencode", isAlive: true, sendErr: errors.New("send failed")}
+	registry := &mockRegistry{adapters: map[string]executor.AgentAdapter{"opencode": adapter}, agents: []string{"opencode"}}
+	m := NewManager(store, registry, executor.NewSecurityProxy(), ManagerConfig{ResponsesDir: responsesDir})
+	if _, err := executor.NewResponseFile(responsesDir, *m.buildSessionInfo(store.workspace, store.session)); err != nil {
+		t.Fatalf("creating response file: %v", err)
+	}
+
+	err := m.Send(context.Background(), "user1", "telegram", "hello")
+	if err == nil {
+		t.Fatal("expected send error")
+	}
+	if len(adapter.sent) != 1 || adapter.sent[0] != "hello" {
+		t.Fatalf("adapter sent = %v", adapter.sent)
+	}
+
+	rf, err := executor.ReadResponseFile(filepath.Join(responsesDir, "ai-chat-lab-a3f2.json"))
+	if err != nil {
+		t.Fatalf("reading response file: %v", err)
+	}
+	if len(rf.Messages) != 0 {
+		t.Fatalf("expected no persisted messages after failed send, got %+v", rf.Messages)
 	}
 }
