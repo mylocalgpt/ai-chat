@@ -15,7 +15,6 @@ type mockSessionManager struct {
 	killCalls   []int64
 	createCalls []createCall
 	clearCalls  []int64
-	switchCalls []switchCall
 	sendCalls   []sendCall
 	activeSess  *core.Session
 }
@@ -23,11 +22,6 @@ type mockSessionManager struct {
 type createCall struct {
 	workspace core.Workspace
 	agent     string
-}
-
-type switchCall struct {
-	workspaceID int64
-	sessionID   int64
 }
 
 type sendCall struct {
@@ -49,11 +43,6 @@ func (m *mockSessionManager) GetActiveSession(_ context.Context, _ int64) (*core
 
 func (m *mockSessionManager) GetSessionByName(_ context.Context, _ string) (*core.Session, error) {
 	return m.activeSess, nil
-}
-
-func (m *mockSessionManager) SetActiveSession(_ context.Context, workspaceID, sessionID int64) error {
-	m.switchCalls = append(m.switchCalls, switchCall{workspaceID: workspaceID, sessionID: sessionID})
-	return nil
 }
 
 func (m *mockSessionManager) CreateSession(_ context.Context, ws core.Workspace, agent string) (*core.Session, error) {
@@ -153,51 +142,6 @@ func TestSessionListWithWorkspaceFilter(t *testing.T) {
 	}
 	if entries[0].Workspace != "proj1" {
 		t.Errorf("expected workspace 'proj1', got %q", entries[0].Workspace)
-	}
-}
-
-func TestSessionSwitchBySlug(t *testing.T) {
-	ms := newMockStore()
-	sm := &mockSessionManager{}
-	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
-
-	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
-	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1"}}
-	sm.activeSess = &ms.sessions[0]
-
-	_, _, err := srv.handleSessionSwitch(context.Background(), &gomcp.CallToolRequest{}, SessionSwitchInput{
-		SessionName: "abc1",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(sm.switchCalls) != 1 {
-		t.Errorf("expected 1 switch call, got %d", len(sm.switchCalls))
-	}
-	if sm.switchCalls[0].sessionID != 10 {
-		t.Errorf("expected sessionID 10, got %d", sm.switchCalls[0].sessionID)
-	}
-}
-
-func TestSessionSwitchByFullName(t *testing.T) {
-	ms := newMockStore()
-	sm := &mockSessionManager{}
-	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
-
-	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
-	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-test-abc1"}}
-	sm.activeSess = &ms.sessions[0]
-
-	_, _, err := srv.handleSessionSwitch(context.Background(), &gomcp.CallToolRequest{}, SessionSwitchInput{
-		SessionName: "ai-chat-test-abc1",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(sm.switchCalls) != 1 {
-		t.Errorf("expected 1 switch call, got %d", len(sm.switchCalls))
 	}
 }
 

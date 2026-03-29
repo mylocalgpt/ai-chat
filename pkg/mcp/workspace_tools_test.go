@@ -123,10 +123,6 @@ func (m *mockStore) GetSessionByName(_ context.Context, name string) (*core.Sess
 	return nil, store.ErrNotFound
 }
 
-func (m *mockStore) GetSessionPreview(_ context.Context, _ int64) (string, string, error) {
-	return "", "", nil
-}
-
 func (m *mockStore) GetModelConfig(_ context.Context, _ string) (*store.ModelConfig, error) {
 	return nil, store.ErrNotFound
 }

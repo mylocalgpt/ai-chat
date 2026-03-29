@@ -21,18 +21,12 @@ type SessionListInput struct {
 }
 
 type SessionListEntry struct {
-	Name         string `json:"name"`
-	Slug         string `json:"slug"`
-	Workspace    string `json:"workspace"`
-	Agent        string `json:"agent"`
-	Status       string `json:"status"`
-	Age          string `json:"age"`
-	PreviewUser  string `json:"preview_user"`
-	PreviewAgent string `json:"preview_agent"`
-}
-
-type SessionSwitchInput struct {
-	SessionName string `json:"session_name" jsonschema:"Session name or slug to switch to"`
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	Workspace string `json:"workspace"`
+	Agent     string `json:"agent"`
+	Status    string `json:"status"`
+	Age       string `json:"age"`
 }
 
 type SessionCreateInput struct {
@@ -56,13 +50,8 @@ type AgentSendInput struct {
 func (s *Server) registerSessionTools() {
 	gomcp.AddTool(s.inner, &gomcp.Tool{
 		Name:        "session_list",
-		Description: "List agent sessions with previews, optionally filtered by workspace",
+		Description: "List agent sessions, optionally filtered by workspace",
 	}, s.handleSessionList)
-
-	gomcp.AddTool(s.inner, &gomcp.Tool{
-		Name:        "session_switch",
-		Description: "Switch active session by name or slug",
-	}, s.handleSessionSwitch)
 
 	gomcp.AddTool(s.inner, &gomcp.Tool{
 		Name:        "session_create",
@@ -118,17 +107,14 @@ func (s *Server) handleSessionList(ctx context.Context, _ *gomcp.CallToolRequest
 	entries := make([]SessionListEntry, 0, len(sessions))
 	for _, sess := range sessions {
 		wsName := wsNames[sess.WorkspaceID]
-		previewUser, previewAgent, _ := s.store.GetSessionPreview(ctx, sess.ID)
 
 		entry := SessionListEntry{
-			Name:         sessionNamePrefix + wsName + "-" + sess.Slug,
-			Slug:         sess.Slug,
-			Workspace:    wsName,
-			Agent:        sess.Agent,
-			Status:       sess.Status,
-			Age:          humanAge(sess.LastActivity),
-			PreviewUser:  truncate(previewUser, 80),
-			PreviewAgent: truncate(previewAgent, 120),
+			Name:      sessionNamePrefix + wsName + "-" + sess.Slug,
+			Slug:      sess.Slug,
+			Workspace: wsName,
+			Agent:     sess.Agent,
+			Status:    sess.Status,
+			Age:       humanAge(sess.LastActivity),
 		}
 		entries = append(entries, entry)
 	}
@@ -139,69 +125,6 @@ func (s *Server) handleSessionList(ctx context.Context, _ *gomcp.CallToolRequest
 	}
 
 	return textResult(string(data)), nil, nil
-}
-
-func (s *Server) handleSessionSwitch(ctx context.Context, _ *gomcp.CallToolRequest, input SessionSwitchInput) (*gomcp.CallToolResult, any, error) {
-	workspace, slug, isFullName := parseSessionName(input.SessionName)
-
-	var sess *core.Session
-	var err error
-
-	if isFullName {
-		ws, lookupErr := s.store.GetWorkspace(ctx, workspace)
-		if lookupErr != nil {
-			if errors.Is(lookupErr, store.ErrNotFound) {
-				return nil, nil, fmt.Errorf("workspace %q not found", workspace)
-			}
-			return nil, nil, fmt.Errorf("looking up workspace: %w", lookupErr)
-		}
-		sess, err = s.store.GetSessionByName(ctx, sessionNamePrefix+workspace+"-"+slug)
-		if err != nil {
-			return nil, nil, fmt.Errorf("looking up session: %w", err)
-		}
-		_ = ws
-	} else {
-		sessions, err := s.store.ListSessions(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("listing sessions: %w", err)
-		}
-
-		var matches []core.Session
-		for _, s := range sessions {
-			if s.Slug == slug {
-				matches = append(matches, s)
-			}
-		}
-
-		if len(matches) == 0 {
-			return nil, nil, fmt.Errorf("session with slug %q not found", slug)
-		}
-		if len(matches) > 1 {
-			var workspaces []string
-			wsMap := make(map[int64]string)
-			for _, w := range matches {
-				if _, ok := wsMap[w.WorkspaceID]; !ok {
-					ws, _ := s.store.GetWorkspace(ctx, "")
-					if ws != nil {
-						wsMap[w.WorkspaceID] = ws.Name
-					}
-				}
-				workspaces = append(workspaces, wsMap[w.WorkspaceID])
-			}
-			return nil, nil, fmt.Errorf("ambiguous slug %q exists in multiple workspaces: %v", slug, workspaces)
-		}
-		sess = &matches[0]
-	}
-
-	if s.sessionMgr == nil {
-		return nil, nil, fmt.Errorf("session manager not available")
-	}
-
-	if err := s.sessionMgr.SetActiveSession(ctx, sess.WorkspaceID, sess.ID); err != nil {
-		return nil, nil, fmt.Errorf("setting active session: %w", err)
-	}
-
-	return textResult(fmt.Sprintf("Switched to session: %s", sessionNamePrefix+sess.Slug)), nil, nil
 }
 
 func (s *Server) handleSessionCreate(ctx context.Context, _ *gomcp.CallToolRequest, input SessionCreateInput) (*gomcp.CallToolResult, any, error) {
@@ -376,11 +299,4 @@ func parseSessionName(input string) (workspace, slug string, isFullName bool) {
 		}
 	}
 	return "", input, false
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen]
 }

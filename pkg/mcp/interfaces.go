@@ -14,7 +14,6 @@ type SessionManager interface {
 	GetActiveSession(ctx context.Context, workspaceID int64) (*core.Session, error)
 	GetSessionByName(ctx context.Context, name string) (*core.Session, error)
 
-	SetActiveSession(ctx context.Context, workspaceID int64, sessionID int64) error
 	CreateSession(ctx context.Context, workspace core.Workspace, agent string) (*core.Session, error)
 	ClearSession(ctx context.Context, session core.Session) (*core.Session, error)
 	KillSession(ctx context.Context, sessionID int64) error
@@ -35,7 +34,6 @@ type MCPStore interface {
 	ListSessions(ctx context.Context) ([]core.Session, error)
 	ListSessionsForWorkspace(ctx context.Context, workspaceID int64) ([]core.Session, error)
 	GetSessionByName(ctx context.Context, name string) (*core.Session, error)
-	GetSessionPreview(ctx context.Context, sessionID int64) (firstUser, lastAgent string, err error)
 
 	GetModelConfig(ctx context.Context, role string) (*store.ModelConfig, error)
 	SetModelConfig(ctx context.Context, cfg store.ModelConfig) error

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
@@ -273,9 +274,28 @@ func (s *Store) scanSession(row *sql.Row) (*core.Session, error) {
 }
 
 func (s *Store) GetSessionByName(ctx context.Context, name string) (*core.Session, error) {
-	return s.GetSessionByTmuxSession(ctx, name)
+	workspace, slug := parseSessionName(name)
+	if workspace == "" || slug == "" {
+		return nil, fmt.Errorf("invalid session name format: %q", name)
+	}
+
+	ws, err := s.GetWorkspace(ctx, workspace)
+	if err != nil {
+		return nil, fmt.Errorf("looking up workspace %q: %w", workspace, err)
+	}
+
+	return s.GetSessionBySlug(ctx, ws.ID, slug)
 }
 
-func (s *Store) GetSessionPreview(ctx context.Context, sessionID int64) (firstUser, lastAgent string, err error) {
-	return "", "", nil
+func parseSessionName(name string) (workspace, slug string) {
+	const prefix = "ai-chat-"
+	if !strings.HasPrefix(name, prefix) {
+		return "", ""
+	}
+	parts := strings.TrimPrefix(name, prefix)
+	idx := strings.LastIndex(parts, "-")
+	if idx <= 0 {
+		return "", ""
+	}
+	return parts[:idx], parts[idx+1:]
 }

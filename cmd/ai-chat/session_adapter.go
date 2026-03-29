@@ -43,10 +43,6 @@ func (e *executorSessionManager) GetSessionByName(ctx context.Context, name stri
 	return e.store.GetSessionByTmuxSession(ctx, name)
 }
 
-func (e *executorSessionManager) SetActiveSession(ctx context.Context, workspaceID int64, sessionID int64) error {
-	return fmt.Errorf("SetActiveSession not implemented for MCP adapter")
-}
-
 func (e *executorSessionManager) CreateSession(ctx context.Context, ws core.Workspace, agent string) (*core.Session, error) {
 	if err := e.exec.SpawnSession(ctx, ws, agent); err != nil {
 		return nil, err
