@@ -67,6 +67,18 @@ func (s *Store) UpdateSessionStatus(ctx context.Context, id int64, status string
 	return nil
 }
 
+// UpdateAgentSessionID sets the agent's own session identifier for a session.
+func (s *Store) UpdateAgentSessionID(ctx context.Context, id int64, agentSessionID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET agent_session_id = ? WHERE id = ?`,
+		agentSessionID, id,
+	)
+	if err != nil {
+		return fmt.Errorf("updating agent session id=%d: %w", id, err)
+	}
+	return nil
+}
+
 // TouchSession updates the last_activity timestamp to now.
 func (s *Store) TouchSession(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,

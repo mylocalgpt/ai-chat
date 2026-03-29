@@ -156,12 +156,13 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 
 func (e *Executor) buildSessionInfo(ws core.Workspace, sess *core.Session) core.SessionInfo {
 	return core.SessionInfo{
-		Name:          sess.TmuxSession,
-		Slug:          sess.Slug,
-		Workspace:     ws.Name,
-		WorkspacePath: ws.Path,
-		Agent:         sess.Agent,
-		ResponseFile:  ResponseFilePath(e.responsesDir, sess.TmuxSession),
+		Name:           sess.TmuxSession,
+		Slug:           sess.Slug,
+		Workspace:      ws.Name,
+		WorkspacePath:  ws.Path,
+		Agent:          sess.Agent,
+		ResponseFile:   ResponseFilePath(e.responsesDir, sess.TmuxSession),
+		AgentSessionID: sess.AgentSessionID,
 	}
 }
 

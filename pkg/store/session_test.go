@@ -238,3 +238,55 @@ func TestGetSessionByReferenceInWorkspaceUsesSlugForPlainReference(t *testing.T)
 		t.Fatalf("ID = %d, want %d", sess.ID, target.ID)
 	}
 }
+
+func TestUpdateAgentSessionID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	w, err := s.CreateWorkspace(ctx, "test-ws", "/tmp/ws", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+
+	sess, err := s.CreateSession(ctx, w.ID, "opencode", "x1y2", "tmux-agent-1")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Initially empty.
+	if sess.AgentSessionID != "" {
+		t.Errorf("initial AgentSessionID = %q, want empty", sess.AgentSessionID)
+	}
+
+	// Set the agent session ID.
+	if err := s.UpdateAgentSessionID(ctx, sess.ID, "ses_test123"); err != nil {
+		t.Fatalf("UpdateAgentSessionID: %v", err)
+	}
+
+	// Read back and verify.
+	got, err := s.GetSessionByID(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSessionByID: %v", err)
+	}
+	if got.AgentSessionID != "ses_test123" {
+		t.Errorf("AgentSessionID = %q, want %q", got.AgentSessionID, "ses_test123")
+	}
+
+	// Clear the agent session ID with empty string.
+	if err := s.UpdateAgentSessionID(ctx, sess.ID, ""); err != nil {
+		t.Fatalf("UpdateAgentSessionID (clear): %v", err)
+	}
+
+	got, err = s.GetSessionByID(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSessionByID after clear: %v", err)
+	}
+	if got.AgentSessionID != "" {
+		t.Errorf("AgentSessionID after clear = %q, want empty", got.AgentSessionID)
+	}
+
+	// Update on non-existent session should not error (UPDATE on zero rows is OK).
+	if err := s.UpdateAgentSessionID(ctx, 99999, "ses_noop"); err != nil {
+		t.Fatalf("UpdateAgentSessionID non-existent: %v", err)
+	}
+}

@@ -61,12 +61,13 @@ type Session struct {
 
 // SessionInfo holds computed, read-only information about a session.
 type SessionInfo struct {
-	Name          string // "ai-chat-lab-a3f2"
-	Slug          string // "a3f2"
-	Workspace     string // "lab"
-	WorkspacePath string // "/home/chief/code/research-lab"
-	Agent         string // "opencode"
-	ResponseFile  string // full path to response JSON
+	Name           string // "ai-chat-lab-a3f2"
+	Slug           string // "a3f2"
+	Workspace      string // "lab"
+	WorkspacePath  string // "/home/chief/code/research-lab"
+	Agent          string // "opencode"
+	ResponseFile   string // full path to response JSON
+	AgentSessionID string // agent's own session identifier (e.g. opencode serve session ID)
 }
 
 // ActiveWorkspace tracks the selected workspace for a sender/channel pair.
@@ -111,6 +112,45 @@ const (
 	SessionCrashed SessionStatus = "crashed"
 	SessionExpired SessionStatus = "expired"
 )
+
+// AgentEventType identifies the kind of streaming event from an agent.
+type AgentEventType string
+
+const (
+	EventText       AgentEventType = "text"
+	EventTextDelta  AgentEventType = "text_delta"
+	EventToolUse    AgentEventType = "tool_use"
+	EventToolResult AgentEventType = "tool_result"
+	EventStepStart  AgentEventType = "step_start"
+	EventStepFinish AgentEventType = "step_finish"
+	EventBusy       AgentEventType = "busy"
+	EventIdle       AgentEventType = "idle"
+	EventError      AgentEventType = "error"
+)
+
+// TokenUsage tracks input/output token counts for a step.
+type TokenUsage struct {
+	Input  int `json:"input"`
+	Output int `json:"output"`
+}
+
+// AgentEvent is a single event from a streaming agent session.
+// Fields are populated based on the event Type:
+//   - EventText, EventTextDelta, EventError: Text
+//   - EventToolUse: ToolName, ToolInput
+//   - EventToolResult: ToolName, ToolOutput
+//   - EventStepFinish: Tokens, Cost, Reason
+//   - EventStepStart, EventBusy, EventIdle: no additional fields
+type AgentEvent struct {
+	Type       AgentEventType
+	Text       string
+	ToolName   string
+	ToolInput  string
+	ToolOutput string
+	Tokens     *TokenUsage
+	Cost       float64
+	Reason     string
+}
 
 // ResponseEvent represents a response from an agent session.
 type ResponseEvent struct {

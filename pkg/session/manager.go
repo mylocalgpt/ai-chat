@@ -38,6 +38,7 @@ type sessionStore interface {
 	ListActiveSessionsForWorkspace(ctx context.Context, workspaceID int64) ([]core.Session, error)
 	CountActiveSessionsForWorkspace(ctx context.Context, workspaceID int64) (int, error)
 	UpdateWorkspaceMetadata(ctx context.Context, id int64, metadata json.RawMessage) error
+	UpdateAgentSessionID(ctx context.Context, id int64, agentSessionID string) error
 }
 
 type AdapterRegistry interface {
@@ -652,12 +653,13 @@ func (m *Manager) Run(ctx context.Context) error {
 
 func (m *Manager) buildSessionInfo(ws *core.Workspace, sess *core.Session) *core.SessionInfo {
 	return &core.SessionInfo{
-		Name:          sess.TmuxSession,
-		Slug:          sess.Slug,
-		Workspace:     ws.Name,
-		WorkspacePath: ws.Path,
-		Agent:         sess.Agent,
-		ResponseFile:  executor.ResponseFilePath(m.cfg.ResponsesDir, sess.TmuxSession),
+		Name:           sess.TmuxSession,
+		Slug:           sess.Slug,
+		Workspace:      ws.Name,
+		WorkspacePath:  ws.Path,
+		Agent:          sess.Agent,
+		ResponseFile:   executor.ResponseFilePath(m.cfg.ResponsesDir, sess.TmuxSession),
+		AgentSessionID: sess.AgentSessionID,
 	}
 }
 

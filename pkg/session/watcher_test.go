@@ -110,6 +110,10 @@ func (m *watcherMockStore) UpdateWorkspaceMetadata(_ context.Context, _ int64, _
 	return nil
 }
 
+func (m *watcherMockStore) UpdateAgentSessionID(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+
 func TestWatcher_EmitsEventOnWrite(t *testing.T) {
 	dir := t.TempDir()
 	ch := make(chan core.ResponseEvent, 10)

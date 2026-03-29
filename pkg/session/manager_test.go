@@ -120,6 +120,10 @@ func (m *mockStore) UpdateWorkspaceMetadata(_ context.Context, _ int64, _ json.R
 	return m.updateMetadataErr
 }
 
+func (m *mockStore) UpdateAgentSessionID(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+
 type mockAdapter struct {
 	name       string
 	isAlive    bool
