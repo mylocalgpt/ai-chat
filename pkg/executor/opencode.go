@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
@@ -33,6 +34,10 @@ func NewOpenCodeAdapter(tmux tmuxRunner, proxy *SecurityProxy) *OpenCodeAdapter 
 
 // openCodeReadyRe matches the OpenCode input prompt area.
 var openCodeReadyRe = regexp.MustCompile(`(?im)(>\s*$|ask anything|input|opencode)`)
+
+// openCodeBusyRe matches the transient busy footer OpenCode shows while a
+// reply is still being generated.
+var openCodeBusyRe = regexp.MustCompile(`(?im)esc interrupt`)
 
 // Name returns the adapter name.
 func (a *OpenCodeAdapter) Name() string {
@@ -107,6 +112,7 @@ func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, me
 
 	var response string
 	var sendErr error
+	messageStarted := false
 
 	for {
 		select {
@@ -121,6 +127,13 @@ func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, me
 			if err != nil {
 				continue
 			}
+			cleanCurrent := StripANSI(raw)
+			if !messageStarted && (paneContainsPromptEcho(cleanCurrent, message) || openCodeBusyRe.MatchString(cleanCurrent)) {
+				messageStarted = true
+			}
+			if !messageStarted {
+				continue
+			}
 
 			currentLines := strings.Split(raw, "\n")
 			divergeIdx := findDivergence(snapshotLines, currentLines)
@@ -130,12 +143,17 @@ func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, me
 
 			newContent := currentLines[divergeIdx:]
 			clean := StripANSI(strings.Join(newContent, "\n"))
-
-			// Check if the input prompt has reappeared.
-			if openCodeReadyRe.MatchString(clean) && len(newContent) > 1 {
-				response = strings.TrimSpace(clean)
-				goto done
+			if openCodeBusyRe.MatchString(clean) {
+				continue
 			}
+
+			candidate := extractOpenCodeResponse(clean)
+			if candidate == "" {
+				continue
+			}
+
+			response = candidate
+			goto done
 		}
 	}
 
@@ -152,6 +170,98 @@ done:
 	}
 
 	return sendErr
+}
+
+func extractOpenCodeResponse(pane string) string {
+	var lines []string
+	for _, line := range strings.Split(pane, "\n") {
+		line = stripOpenCodeSidebar(line)
+		line = strings.TrimRight(line, " \t")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		trimmedLeft := strings.TrimLeft(line, " ")
+		if strings.HasPrefix(trimmedLeft, "┃") || strings.HasPrefix(trimmedLeft, "╹") {
+			continue
+		}
+		if isOpenCodeChromeLine(trimmed) {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	lines = dedupeAdjacentLines(lines)
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func stripOpenCodeSidebar(line string) string {
+	if idx := strings.IndexRune(line, '█'); idx >= 0 {
+		return line[:idx]
+	}
+	return line
+}
+
+func isOpenCodeChromeLine(line string) bool {
+	lower := strings.ToLower(line)
+	for _, marker := range []string{
+		"ask anything...",
+		"tab agents",
+		"ctrl+p commands",
+		"tip press f2",
+		"tip opencode uses",
+		"opencode 1.",
+		"new session -",
+		"build  gpt-",
+		"build · gpt-",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	if strings.HasPrefix(lower, "context") || strings.HasPrefix(lower, "mcp") || strings.HasPrefix(lower, "lsp") || strings.HasPrefix(lower, "greeting:") || strings.HasPrefix(line, "~/") {
+		return true
+	}
+	if !containsAlphaNumeric(line) {
+		return true
+	}
+	return false
+}
+
+func paneContainsPromptEcho(pane, message string) bool {
+	message = normalizeWhitespace(message)
+	if message == "" {
+		return true
+	}
+	return strings.Contains(normalizeWhitespace(pane), message)
+}
+
+func normalizeWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func dedupeAdjacentLines(lines []string) []string {
+	if len(lines) < 2 {
+		return lines
+	}
+	result := make([]string, 0, len(lines))
+	var prev string
+	for i, line := range lines {
+		if i > 0 && line == prev {
+			continue
+		}
+		result = append(result, line)
+		prev = line
+	}
+	return result
+}
+
+func containsAlphaNumeric(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsAlive reports whether the tmux session is still running.
