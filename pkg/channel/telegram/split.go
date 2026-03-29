@@ -120,6 +120,9 @@ func splitRecursive(text string, maxLen int, regions []fenceRegion) []string {
 	}
 
 	fence := fenceAt(splitPoint, regions)
+	if fence != nil && splitPoint == fence.start {
+		fence = nil // split is at fence boundary, not inside
+	}
 	inFence := fence != nil
 
 	chunkEnd := splitPoint
@@ -255,16 +258,18 @@ func findBestSplitPoint(runes []rune, maxLen int, regions []fenceRegion) int {
 	}
 
 	// Priority 2: After </blockquote>\n - split after the \n.
+	// Start scan at searchEnd - len(pattern) so i + len(pattern) never exceeds searchEnd.
 	bqPattern := []rune("</blockquote>\n")
-	for i := searchEnd; i >= searchStart; i-- {
+	for i := searchEnd - len(bqPattern); i >= searchStart; i-- {
 		if runeSliceMatch(runes, i, bqPattern) {
 			return i + len(bqPattern)
 		}
 	}
 
 	// Priority 3: After </code></pre>\n - split after the \n.
+	// Start scan at searchEnd - len(pattern) so i + len(pattern) never exceeds searchEnd.
 	codeEndPattern := []rune("</code></pre>\n")
-	for i := searchEnd; i >= searchStart; i-- {
+	for i := searchEnd - len(codeEndPattern); i >= searchStart; i-- {
 		if runeSliceMatch(runes, i, codeEndPattern) {
 			return i + len(codeEndPattern)
 		}

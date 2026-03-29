@@ -1312,6 +1312,78 @@ func TestSplitMessageEmptyAndEdgeCases(t *testing.T) {
 		}
 	})
 
+	t.Run("blockquote end split never exceeds maxLen", func(t *testing.T) {
+		// Place </blockquote>\n so that it ends right at maxLen. Before the fix,
+		// the backward scan started at searchEnd (==maxLen) and could return
+		// i + len("</blockquote>\n") > maxLen.
+		maxLen := 100
+		// Build: filler + </blockquote>\n  where the pattern ends exactly at rune 100.
+		bqClose := "</blockquote>\n"
+		fillerLen := maxLen - len([]rune(bqClose))
+		filler := strings.Repeat("a", fillerLen)
+		tail := strings.Repeat("x", 60)
+		input := filler + bqClose + tail
+
+		chunks := SplitMessage(input, maxLen)
+		for i, chunk := range chunks {
+			runeLen := len([]rune(chunk))
+			if runeLen > maxLen {
+				t.Errorf("chunk %d exceeds maxLen: %d runes > %d", i, runeLen, maxLen)
+			}
+		}
+	})
+
+	t.Run("code block end split never exceeds maxLen", func(t *testing.T) {
+		// Same idea as the blockquote test but for </code></pre>\n.
+		maxLen := 100
+		codeClose := "</code></pre>\n"
+		fillerLen := maxLen - len([]rune(codeClose))
+		filler := strings.Repeat("a", fillerLen)
+		tail := strings.Repeat("x", 60)
+		input := filler + codeClose + tail
+
+		chunks := SplitMessage(input, maxLen)
+		for i, chunk := range chunks {
+			runeLen := len([]rune(chunk))
+			if runeLen > maxLen {
+				t.Errorf("chunk %d exceeds maxLen: %d runes > %d", i, runeLen, maxLen)
+			}
+		}
+	})
+
+	t.Run("split at fence boundary no double open tag", func(t *testing.T) {
+		// When the split point lands exactly at a fence start (e.g. \n\n just
+		// before <pre><code>), the code must NOT treat it as inside the fence.
+		// Before the fix, fenceAt returned the fence, causing doubled open tags
+		// and orphaned close tags.
+		maxLen := 100
+		textBefore := strings.Repeat("a", 80)
+		codeContent := strings.Repeat("c", 250)
+		input := textBefore + "\n\n<pre><code>" + codeContent + "</code></pre>"
+
+		chunks := SplitMessage(input, maxLen)
+		if len(chunks) < 2 {
+			t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+		}
+
+		for i, chunk := range chunks {
+			runeLen := len([]rune(chunk))
+			if runeLen > maxLen {
+				t.Errorf("chunk %d exceeds maxLen: %d runes > %d", i, runeLen, maxLen)
+			}
+			// No chunk should contain a doubled open tag.
+			if strings.Contains(chunk, "<pre><code><pre><code>") {
+				t.Errorf("chunk %d has doubled open fence tags: %q", i, chunk[:min(len(chunk), 80)])
+			}
+		}
+
+		// First chunk should NOT have an orphaned </code></pre> if it contains
+		// no code fence content.
+		if !strings.Contains(chunks[0], "<pre><code>") && strings.Contains(chunks[0], "</code></pre>") {
+			t.Errorf("first chunk has orphaned close fence tag without open: %q", chunks[0])
+		}
+	})
+
 	t.Run("no panics on various edge cases", func(t *testing.T) {
 		edgeCases := []string{
 			"",
