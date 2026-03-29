@@ -128,9 +128,9 @@ func (w *Watcher) processFile(ctx context.Context, path string) {
 	w.lastSeen[path] = agentMsgCount
 	w.mu.Unlock()
 
-	uc, err := w.store.GetUserContextBySession(ctx, sess.ID)
+	active, err := w.store.GetActiveWorkspaceSessionBySessionID(ctx, sess.ID)
 	if err != nil {
-		slog.Debug("user context not found for session", "session_id", sess.ID, "error", err)
+		slog.Debug("active session mapping not found for session", "session_id", sess.ID, "error", err)
 		return
 	}
 
@@ -146,14 +146,14 @@ func (w *Watcher) processFile(ctx context.Context, path string) {
 	event := core.ResponseEvent{
 		SessionName: sessionName,
 		SessionID:   sess.ID,
-		SenderID:    uc.SenderID,
-		Channel:     uc.Channel,
+		SenderID:    active.SenderID,
+		Channel:     active.Channel,
 		Content:     content,
 	}
 
 	select {
 	case w.responseCh <- event:
-		slog.Debug("emitted response event", "session", sessionName, "sender", uc.SenderID)
+		slog.Debug("emitted response event", "session", sessionName, "sender", active.SenderID)
 	case <-ctx.Done():
 	}
 }

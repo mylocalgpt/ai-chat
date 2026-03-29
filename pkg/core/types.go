@@ -69,13 +69,19 @@ type SessionInfo struct {
 	ResponseFile  string // full path to response JSON
 }
 
-// UserContext tracks per-user, per-channel state.
-type UserContext struct {
-	SenderID          string
-	Channel           string
-	ActiveWorkspaceID int64
-	ActiveSessionID   *int64
-	UpdatedAt         time.Time
+// ActiveWorkspace tracks the selected workspace for a sender/channel pair.
+type ActiveWorkspace struct {
+	SenderID    string
+	Channel     string
+	WorkspaceID int64
+}
+
+// ActiveWorkspaceSession tracks the selected session for one workspace.
+type ActiveWorkspaceSession struct {
+	SenderID    string
+	Channel     string
+	WorkspaceID int64
+	SessionID   int64
 }
 
 // MessageDirection indicates whether a message is inbound or outbound.

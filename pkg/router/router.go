@@ -82,10 +82,10 @@ func (r *Router) handleWorkspaces(ctx context.Context, msg core.InboundMessage) 
 		return "", fmt.Errorf("listing workspaces: %w", err)
 	}
 
-	uc, err := r.store.GetUserContext(ctx, msg.SenderID, msg.Channel)
+	active, err := r.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
 	activeID := int64(0)
 	if err == nil {
-		activeID = uc.ActiveWorkspaceID
+		activeID = active.WorkspaceID
 	}
 
 	if len(workspaces) == 0 {
@@ -110,12 +110,12 @@ func (r *Router) handleWorkspaces(ctx context.Context, msg core.InboundMessage) 
 }
 
 func (r *Router) handleSessions(ctx context.Context, msg core.InboundMessage) (string, error) {
-	uc, err := r.store.GetUserContext(ctx, msg.SenderID, msg.Channel)
+	active, err := r.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
 	if err != nil {
 		return "No active workspace. Use /switch <name> first.", nil
 	}
 
-	sessions, err := r.store.ListSessionsForWorkspace(ctx, uc.ActiveWorkspaceID)
+	sessions, err := r.store.ListSessionsForWorkspace(ctx, active.WorkspaceID)
 	if err != nil {
 		return "", fmt.Errorf("listing sessions: %w", err)
 	}
@@ -165,13 +165,13 @@ func (r *Router) handleNew(ctx context.Context, msg core.InboundMessage) (string
 		return "Session manager not configured.", nil
 	}
 
-	uc, err := r.store.GetUserContext(ctx, msg.SenderID, msg.Channel)
+	active, err := r.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
 	if err != nil {
 		return "No active workspace. Use /switch <name> first.", nil
 	}
 
 	agent := "opencode"
-	info, err := r.sessionMgr.CreateSession(ctx, uc.ActiveWorkspaceID, agent)
+	info, err := r.sessionMgr.CreateSession(ctx, active.WorkspaceID, agent)
 	if err != nil {
 		return "", fmt.Errorf("creating session: %w", err)
 	}
@@ -216,11 +216,11 @@ func (r *Router) handleKill(ctx context.Context, msg core.InboundMessage) (strin
 
 func (r *Router) handleStatus(ctx context.Context, msg core.InboundMessage) (string, error) {
 	if r.sessionMgr == nil {
-		uc, err := r.store.GetUserContext(ctx, msg.SenderID, msg.Channel)
+		active, err := r.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
 		if err != nil {
 			return "No workspace selected.", nil
 		}
-		ws, err := r.store.GetWorkspaceByID(ctx, uc.ActiveWorkspaceID)
+		ws, err := r.store.GetWorkspaceByID(ctx, active.WorkspaceID)
 		if err != nil {
 			return "No workspace selected.", nil
 		}

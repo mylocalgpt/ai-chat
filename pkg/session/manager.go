@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -11,20 +12,23 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
 	"github.com/mylocalgpt/ai-chat/pkg/router"
+	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
 type sessionStore interface {
-	GetUserContext(ctx context.Context, senderID, channel string) (*core.UserContext, error)
-	GetUserContextBySession(ctx context.Context, sessionID int64) (*core.UserContext, error)
+	GetActiveWorkspace(ctx context.Context, senderID, channel string) (*core.ActiveWorkspace, error)
+	GetActiveWorkspaceSessionBySessionID(ctx context.Context, sessionID int64) (*core.ActiveWorkspaceSession, error)
 	SetActiveWorkspace(ctx context.Context, senderID, channel string, workspaceID int64) error
-	SetActiveSession(ctx context.Context, senderID, channel string, sessionID int64) error
-	ClearActiveSession(ctx context.Context, senderID, channel string) error
+	GetActiveSessionForWorkspace(ctx context.Context, senderID, channel string, workspaceID int64) (*core.ActiveWorkspaceSession, error)
+	SetActiveSessionForWorkspace(ctx context.Context, senderID, channel string, workspaceID, sessionID int64) error
+	ClearActiveSessionForWorkspace(ctx context.Context, senderID, channel string, workspaceID int64) error
 	GetWorkspaceByID(ctx context.Context, id int64) (*core.Workspace, error)
 	GetWorkspaceByName(ctx context.Context, name string) (*core.Workspace, error)
 	GetWorkspaceByAlias(ctx context.Context, alias string) (*core.Workspace, error)
 	GetSessionByID(ctx context.Context, id int64) (*core.Session, error)
 	GetSessionByTmuxSession(ctx context.Context, tmuxSession string) (*core.Session, error)
 	GetActiveSession(ctx context.Context, workspaceID int64) (*core.Session, error)
+	GetActiveSessionForSender(ctx context.Context, senderID, channel string, workspaceID int64) (*core.Session, error)
 	CreateSession(ctx context.Context, workspaceID int64, agent, slug, tmuxSession string) (*core.Session, error)
 	UpdateSessionStatus(ctx context.Context, id int64, status string) error
 	TouchSession(ctx context.Context, id int64) error
@@ -122,18 +126,19 @@ func (m *Manager) GetOrCreateActiveSession(ctx context.Context, senderID, channe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	uc, err := m.store.GetUserContext(ctx, senderID, channel)
+	activeWorkspace, err := m.store.GetActiveWorkspace(ctx, senderID, channel)
 	if err != nil {
-		return nil, nil, fmt.Errorf("getting user context: %w", err)
+		return nil, nil, fmt.Errorf("getting active workspace: %w", err)
 	}
 
-	ws, err := m.store.GetWorkspaceByID(ctx, uc.ActiveWorkspaceID)
+	ws, err := m.store.GetWorkspaceByID(ctx, activeWorkspace.WorkspaceID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting workspace: %w", err)
 	}
 
-	if uc.ActiveSessionID != nil {
-		sess, err := m.store.GetSessionByID(ctx, *uc.ActiveSessionID)
+	activeSession, err := m.store.GetActiveSessionForWorkspace(ctx, senderID, channel, ws.ID)
+	if err == nil && activeSession != nil {
+		sess, err := m.store.GetSessionByID(ctx, activeSession.SessionID)
 		if err == nil {
 			adapter, err := m.adapters.GetAdapter(sess.Agent)
 			if err == nil {
@@ -150,7 +155,7 @@ func (m *Manager) GetOrCreateActiveSession(ctx context.Context, senderID, channe
 		return nil, nil, err
 	}
 
-	if err := m.store.SetActiveSession(ctx, senderID, channel, sess.ID); err != nil {
+	if err := m.store.SetActiveSessionForWorkspace(ctx, senderID, channel, ws.ID, sess.ID); err != nil {
 		return nil, nil, fmt.Errorf("setting active session: %w", err)
 	}
 
@@ -214,18 +219,19 @@ func (m *Manager) ClearSession(ctx context.Context, senderID, channel string) (*
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	uc, err := m.store.GetUserContext(ctx, senderID, channel)
+	activeWorkspace, err := m.store.GetActiveWorkspace(ctx, senderID, channel)
 	if err != nil {
-		return nil, fmt.Errorf("getting user context: %w", err)
+		return nil, fmt.Errorf("getting active workspace: %w", err)
 	}
 
-	ws, err := m.store.GetWorkspaceByID(ctx, uc.ActiveWorkspaceID)
+	ws, err := m.store.GetWorkspaceByID(ctx, activeWorkspace.WorkspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("getting workspace: %w", err)
 	}
 
-	if uc.ActiveSessionID != nil {
-		sess, err := m.store.GetSessionByID(ctx, *uc.ActiveSessionID)
+	activeSession, err := m.store.GetActiveSessionForWorkspace(ctx, senderID, channel, ws.ID)
+	if err == nil && activeSession != nil {
+		sess, err := m.store.GetSessionByID(ctx, activeSession.SessionID)
 		if err == nil {
 			adapter, err := m.adapters.GetAdapter(sess.Agent)
 			if err == nil && adapter.Name() == "opencode" {
@@ -242,7 +248,7 @@ func (m *Manager) ClearSession(ctx context.Context, senderID, channel string) (*
 		return nil, err
 	}
 
-	if err := m.store.SetActiveSession(ctx, senderID, channel, sess.ID); err != nil {
+	if err := m.store.SetActiveSessionForWorkspace(ctx, senderID, channel, ws.ID, sess.ID); err != nil {
 		return nil, fmt.Errorf("setting active session: %w", err)
 	}
 
@@ -253,16 +259,20 @@ func (m *Manager) KillSession(ctx context.Context, senderID, channel string) err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	uc, err := m.store.GetUserContext(ctx, senderID, channel)
+	activeWorkspace, err := m.store.GetActiveWorkspace(ctx, senderID, channel)
 	if err != nil {
-		return fmt.Errorf("getting user context: %w", err)
+		return fmt.Errorf("getting active workspace: %w", err)
 	}
 
-	if uc.ActiveSessionID == nil {
+	activeSession, err := m.store.GetActiveSessionForWorkspace(ctx, senderID, channel, activeWorkspace.WorkspaceID)
+	if errors.Is(err, core.ErrNotFound) || errors.Is(err, store.ErrNotFound) {
 		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("getting active session mapping: %w", err)
+	}
 
-	sess, err := m.store.GetSessionByID(ctx, *uc.ActiveSessionID)
+	sess, err := m.store.GetSessionByID(ctx, activeSession.SessionID)
 	if err != nil {
 		return fmt.Errorf("getting session: %w", err)
 	}
@@ -280,7 +290,7 @@ func (m *Manager) KillSession(ctx context.Context, senderID, channel string) err
 		return fmt.Errorf("updating session status: %w", err)
 	}
 
-	if err := m.store.ClearActiveSession(ctx, senderID, channel); err != nil {
+	if err := m.store.ClearActiveSessionForWorkspace(ctx, senderID, channel, activeWorkspace.WorkspaceID); err != nil {
 		return fmt.Errorf("clearing active session: %w", err)
 	}
 
@@ -288,12 +298,12 @@ func (m *Manager) KillSession(ctx context.Context, senderID, channel string) err
 }
 
 func (m *Manager) GetStatus(ctx context.Context, senderID, channel string) (*router.StatusInfo, error) {
-	uc, err := m.store.GetUserContext(ctx, senderID, channel)
+	activeWorkspace, err := m.store.GetActiveWorkspace(ctx, senderID, channel)
 	if err != nil {
-		return nil, fmt.Errorf("getting user context: %w", err)
+		return nil, fmt.Errorf("getting active workspace: %w", err)
 	}
 
-	ws, err := m.store.GetWorkspaceByID(ctx, uc.ActiveWorkspaceID)
+	ws, err := m.store.GetWorkspaceByID(ctx, activeWorkspace.WorkspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("getting workspace: %w", err)
 	}
@@ -310,8 +320,9 @@ func (m *Manager) GetStatus(ctx context.Context, senderID, channel string) (*rou
 	}
 	info.SessionCount = count
 
-	if uc.ActiveSessionID != nil {
-		sess, err := m.store.GetSessionByID(ctx, *uc.ActiveSessionID)
+	activeSession, err := m.store.GetActiveSessionForWorkspace(ctx, senderID, channel, ws.ID)
+	if err == nil && activeSession != nil {
+		sess, err := m.store.GetSessionByID(ctx, activeSession.SessionID)
 		if err == nil {
 			sessionInfo := m.buildSessionInfo(ws, sess)
 			info.ActiveSession = sessionInfo
@@ -333,12 +344,12 @@ func (m *Manager) SetAgent(ctx context.Context, senderID, channel, agent string)
 		return fmt.Errorf("unknown agent: %q", agent)
 	}
 
-	uc, err := m.store.GetUserContext(ctx, senderID, channel)
+	activeWorkspace, err := m.store.GetActiveWorkspace(ctx, senderID, channel)
 	if err != nil {
-		return fmt.Errorf("getting user context: %w", err)
+		return fmt.Errorf("getting active workspace: %w", err)
 	}
 
-	ws, err := m.store.GetWorkspaceByID(ctx, uc.ActiveWorkspaceID)
+	ws, err := m.store.GetWorkspaceByID(ctx, activeWorkspace.WorkspaceID)
 	if err != nil {
 		return fmt.Errorf("getting workspace: %w", err)
 	}
@@ -359,8 +370,9 @@ func (m *Manager) SetAgent(ctx context.Context, senderID, channel, agent string)
 		return fmt.Errorf("updating workspace metadata: %w", err)
 	}
 
-	if uc.ActiveSessionID != nil {
-		sess, err := m.store.GetSessionByID(ctx, *uc.ActiveSessionID)
+	activeSession, err := m.store.GetActiveSessionForWorkspace(ctx, senderID, channel, ws.ID)
+	if err == nil && activeSession != nil {
+		sess, err := m.store.GetSessionByID(ctx, activeSession.SessionID)
 		if err == nil && sess.Agent != agent {
 			adapter, err := m.adapters.GetAdapter(sess.Agent)
 			if err == nil {
@@ -368,7 +380,7 @@ func (m *Manager) SetAgent(ctx context.Context, senderID, channel, agent string)
 				_ = adapter.Stop(ctx, *info)
 			}
 			_ = m.store.UpdateSessionStatus(ctx, sess.ID, string(core.SessionExpired))
-			_ = m.store.ClearActiveSession(ctx, senderID, channel)
+			_ = m.store.ClearActiveSessionForWorkspace(ctx, senderID, channel, ws.ID)
 		}
 	}
 

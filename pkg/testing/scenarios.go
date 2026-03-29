@@ -186,15 +186,16 @@ func TestSessionLifecycle(t T, h *TestHarness) {
 			t.Fatalf("sending first message: %v", err)
 		}
 
-		uc, err := h.Store.GetUserContext(ctx, "test-sender", "test")
+		active, err := h.Store.GetActiveWorkspace(ctx, "test-sender", "test")
 		if err != nil {
-			t.Fatalf("getting user context: %v", err)
+			t.Fatalf("getting active workspace: %v", err)
 		}
-		if uc.ActiveSessionID == nil {
-			t.Fatal("expected active session ID")
+		activeSession, err := h.Store.GetActiveSessionForWorkspace(ctx, "test-sender", "test", active.WorkspaceID)
+		if err != nil {
+			t.Fatalf("getting active session: %v", err)
 		}
 
-		sess, err := h.Store.GetSessionByID(ctx, *uc.ActiveSessionID)
+		sess, err := h.Store.GetSessionByID(ctx, activeSession.SessionID)
 		if err != nil {
 			t.Fatalf("getting session: %v", err)
 		}
@@ -204,34 +205,36 @@ func TestSessionLifecycle(t T, h *TestHarness) {
 	})
 
 	t.Run("second_message_reuses_session", func(t T) {
-		uc1, _ := h.Store.GetUserContext(ctx, "test-sender", "test")
-		sessionID1 := *uc1.ActiveSessionID
+		active, _ := h.Store.GetActiveWorkspace(ctx, "test-sender", "test")
+		activeSession1, _ := h.Store.GetActiveSessionForWorkspace(ctx, "test-sender", "test", active.WorkspaceID)
+		sessionID1 := activeSession1.SessionID
 
 		_, err := h.SendMessage(ctx, "test-sender", "second message")
 		if err != nil {
 			t.Fatalf("sending second message: %v", err)
 		}
 
-		uc2, err := h.Store.GetUserContext(ctx, "test-sender", "test")
+		activeSession2, err := h.Store.GetActiveSessionForWorkspace(ctx, "test-sender", "test", active.WorkspaceID)
 		if err != nil {
-			t.Fatalf("getting user context: %v", err)
+			t.Fatalf("getting active session: %v", err)
 		}
-		if *uc2.ActiveSessionID != sessionID1 {
-			t.Errorf("expected same session ID, got %d vs %d", sessionID1, *uc2.ActiveSessionID)
+		if activeSession2.SessionID != sessionID1 {
+			t.Errorf("expected same session ID, got %d vs %d", sessionID1, activeSession2.SessionID)
 		}
 	})
 
 	t.Run("clear_creates_new_session", func(t T) {
-		uc1, _ := h.Store.GetUserContext(ctx, "test-sender", "test")
-		oldSessionID := *uc1.ActiveSessionID
+		active, _ := h.Store.GetActiveWorkspace(ctx, "test-sender", "test")
+		activeSession1, _ := h.Store.GetActiveSessionForWorkspace(ctx, "test-sender", "test", active.WorkspaceID)
+		oldSessionID := activeSession1.SessionID
 
 		_, err := h.SendMessage(ctx, "test-sender", "/clear")
 		if err != nil {
 			t.Fatalf("sending /clear: %v", err)
 		}
 
-		uc2, _ := h.Store.GetUserContext(ctx, "test-sender", "test")
-		if *uc2.ActiveSessionID == oldSessionID {
+		activeSession2, _ := h.Store.GetActiveSessionForWorkspace(ctx, "test-sender", "test", active.WorkspaceID)
+		if activeSession2.SessionID == oldSessionID {
 			t.Error("expected new session ID after clear")
 		}
 
@@ -245,17 +248,18 @@ func TestSessionLifecycle(t T, h *TestHarness) {
 	})
 
 	t.Run("third_message_uses_new_session", func(t T) {
-		uc1, _ := h.Store.GetUserContext(ctx, "test-sender", "test")
-		sessionID1 := *uc1.ActiveSessionID
+		active, _ := h.Store.GetActiveWorkspace(ctx, "test-sender", "test")
+		activeSession1, _ := h.Store.GetActiveSessionForWorkspace(ctx, "test-sender", "test", active.WorkspaceID)
+		sessionID1 := activeSession1.SessionID
 
 		_, err := h.SendMessage(ctx, "test-sender", "third message")
 		if err != nil {
 			t.Fatalf("sending third message: %v", err)
 		}
 
-		uc2, _ := h.Store.GetUserContext(ctx, "test-sender", "test")
-		if *uc2.ActiveSessionID != sessionID1 {
-			t.Errorf("expected same session ID after clear, got %d vs %d", sessionID1, *uc2.ActiveSessionID)
+		activeSession2, _ := h.Store.GetActiveSessionForWorkspace(ctx, "test-sender", "test", active.WorkspaceID)
+		if activeSession2.SessionID != sessionID1 {
+			t.Errorf("expected same session ID after clear, got %d vs %d", sessionID1, activeSession2.SessionID)
 		}
 	})
 

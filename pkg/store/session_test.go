@@ -84,6 +84,41 @@ func TestTouchSession(t *testing.T) {
 	}
 }
 
+func TestGetActiveSessionForSenderUsesExplicitWorkspaceMapping(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	w, err := s.CreateWorkspace(ctx, "test-ws", "/tmp/ws", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+	sess1, err := s.CreateSession(ctx, w.ID, "opencode", "a1b2", "tmux-1")
+	if err != nil {
+		t.Fatalf("CreateSession 1: %v", err)
+	}
+	sess2, err := s.CreateSession(ctx, w.ID, "opencode", "c3d4", "tmux-2")
+	if err != nil {
+		t.Fatalf("CreateSession 2: %v", err)
+	}
+	if err := s.SetActiveWorkspace(ctx, "user1", "telegram", w.ID); err != nil {
+		t.Fatalf("SetActiveWorkspace: %v", err)
+	}
+	if err := s.SetActiveSessionForWorkspace(ctx, "user1", "telegram", w.ID, sess1.ID); err != nil {
+		t.Fatalf("SetActiveSessionForWorkspace 1: %v", err)
+	}
+	if err := s.SetActiveSessionForWorkspace(ctx, "user1", "telegram", w.ID, sess2.ID); err != nil {
+		t.Fatalf("SetActiveSessionForWorkspace 2: %v", err)
+	}
+
+	active, err := s.GetActiveSessionForSender(ctx, "user1", "telegram", w.ID)
+	if err != nil {
+		t.Fatalf("GetActiveSessionForSender: %v", err)
+	}
+	if active.ID != sess2.ID {
+		t.Fatalf("ID = %d, want %d", active.ID, sess2.ID)
+	}
+}
+
 func TestListSessions(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

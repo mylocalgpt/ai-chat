@@ -12,8 +12,10 @@ import (
 )
 
 type mockStore struct {
-	userContext         *core.UserContext
-	userContextErr      error
+	activeWorkspace     *core.ActiveWorkspace
+	activeWorkspaceErr  error
+	activeSession       *core.ActiveWorkspaceSession
+	activeSessionErr    error
 	workspace           *core.Workspace
 	workspaceErr        error
 	session             *core.Session
@@ -30,11 +32,11 @@ type mockStore struct {
 	updateMetadataErr   error
 }
 
-func (m *mockStore) GetUserContext(_ context.Context, _, _ string) (*core.UserContext, error) {
-	return m.userContext, m.userContextErr
+func (m *mockStore) GetActiveWorkspace(_ context.Context, _, _ string) (*core.ActiveWorkspace, error) {
+	return m.activeWorkspace, m.activeWorkspaceErr
 }
 
-func (m *mockStore) GetUserContextBySession(_ context.Context, _ int64) (*core.UserContext, error) {
+func (m *mockStore) GetActiveWorkspaceSessionBySessionID(_ context.Context, _ int64) (*core.ActiveWorkspaceSession, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -42,11 +44,15 @@ func (m *mockStore) SetActiveWorkspace(_ context.Context, _, _ string, _ int64) 
 	return nil
 }
 
-func (m *mockStore) SetActiveSession(_ context.Context, _, _ string, _ int64) error {
+func (m *mockStore) GetActiveSessionForWorkspace(_ context.Context, _, _ string, _ int64) (*core.ActiveWorkspaceSession, error) {
+	return m.activeSession, m.activeSessionErr
+}
+
+func (m *mockStore) SetActiveSessionForWorkspace(_ context.Context, _, _ string, _, _ int64) error {
 	return m.setActiveSessionErr
 }
 
-func (m *mockStore) ClearActiveSession(_ context.Context, _, _ string) error {
+func (m *mockStore) ClearActiveSessionForWorkspace(_ context.Context, _, _ string, _ int64) error {
 	return m.clearActiveSession
 }
 
@@ -71,6 +77,10 @@ func (m *mockStore) GetSessionByTmuxSession(_ context.Context, _ string) (*core.
 }
 
 func (m *mockStore) GetActiveSession(_ context.Context, _ int64) (*core.Session, error) {
+	return m.session, m.sessionErr
+}
+
+func (m *mockStore) GetActiveSessionForSender(_ context.Context, _, _ string, _ int64) (*core.Session, error) {
 	return m.session, m.sessionErr
 }
 
@@ -171,10 +181,10 @@ func TestNewManager_AppliesDefaults(t *testing.T) {
 func TestGetOrCreateActiveSession_CreatesNewWhenNone(t *testing.T) {
 	sessionID := int64(42)
 	store := &mockStore{
-		userContext: &core.UserContext{
-			SenderID:          "user1",
-			Channel:           "telegram",
-			ActiveWorkspaceID: 1,
+		activeWorkspace: &core.ActiveWorkspace{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
 		},
 		workspace: &core.Workspace{
 			ID:   1,
@@ -216,11 +226,16 @@ func TestGetOrCreateActiveSession_CreatesNewWhenNone(t *testing.T) {
 func TestGetOrCreateActiveSession_ReusesExisting(t *testing.T) {
 	sessionID := int64(42)
 	store := &mockStore{
-		userContext: &core.UserContext{
-			SenderID:          "user1",
-			Channel:           "telegram",
-			ActiveWorkspaceID: 1,
-			ActiveSessionID:   &sessionID,
+		activeWorkspace: &core.ActiveWorkspace{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+		},
+		activeSession: &core.ActiveWorkspaceSession{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+			SessionID:   sessionID,
 		},
 		workspace: &core.Workspace{
 			ID:   1,
@@ -257,11 +272,16 @@ func TestGetOrCreateActiveSession_CreatesNewWhenDead(t *testing.T) {
 	oldSessionID := int64(42)
 	newSessionID := int64(99)
 	store := &mockStore{
-		userContext: &core.UserContext{
-			SenderID:          "user1",
-			Channel:           "telegram",
-			ActiveWorkspaceID: 1,
-			ActiveSessionID:   &oldSessionID,
+		activeWorkspace: &core.ActiveWorkspace{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+		},
+		activeSession: &core.ActiveWorkspaceSession{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+			SessionID:   oldSessionID,
 		},
 		workspace: &core.Workspace{
 			ID:   1,
@@ -297,11 +317,16 @@ func TestGetOrCreateActiveSession_CreatesNewWhenDead(t *testing.T) {
 func TestClearSession_AdapterAware(t *testing.T) {
 	sessionID := int64(42)
 	store := &mockStore{
-		userContext: &core.UserContext{
-			SenderID:          "user1",
-			Channel:           "telegram",
-			ActiveWorkspaceID: 1,
-			ActiveSessionID:   &sessionID,
+		activeWorkspace: &core.ActiveWorkspace{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+		},
+		activeSession: &core.ActiveWorkspaceSession{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+			SessionID:   sessionID,
 		},
 		workspace: &core.Workspace{
 			ID:   1,
@@ -337,11 +362,16 @@ func TestClearSession_AdapterAware(t *testing.T) {
 func TestClearSession_CopilotStateless(t *testing.T) {
 	sessionID := int64(42)
 	store := &mockStore{
-		userContext: &core.UserContext{
-			SenderID:          "user1",
-			Channel:           "telegram",
-			ActiveWorkspaceID: 1,
-			ActiveSessionID:   &sessionID,
+		activeWorkspace: &core.ActiveWorkspace{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+		},
+		activeSession: &core.ActiveWorkspaceSession{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+			SessionID:   sessionID,
 		},
 		workspace: &core.Workspace{
 			ID:   1,
@@ -381,11 +411,16 @@ func TestClearSession_CopilotStateless(t *testing.T) {
 func TestKillSession(t *testing.T) {
 	sessionID := int64(42)
 	store := &mockStore{
-		userContext: &core.UserContext{
-			SenderID:          "user1",
-			Channel:           "telegram",
-			ActiveWorkspaceID: 1,
-			ActiveSessionID:   &sessionID,
+		activeWorkspace: &core.ActiveWorkspace{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+		},
+		activeSession: &core.ActiveWorkspaceSession{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+			SessionID:   sessionID,
 		},
 		workspace: &core.Workspace{
 			ID:   1,
@@ -417,10 +452,10 @@ func TestKillSession(t *testing.T) {
 
 func TestSetAgent_UnknownAgent(t *testing.T) {
 	store := &mockStore{
-		userContext: &core.UserContext{
-			SenderID:          "user1",
-			Channel:           "telegram",
-			ActiveWorkspaceID: 1,
+		activeWorkspace: &core.ActiveWorkspace{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
 		},
 		workspace: &core.Workspace{
 			ID:   1,
@@ -445,11 +480,16 @@ func TestSetAgent_UnknownAgent(t *testing.T) {
 func TestSetAgent_KillsDifferentAgentSession(t *testing.T) {
 	sessionID := int64(42)
 	store := &mockStore{
-		userContext: &core.UserContext{
-			SenderID:          "user1",
-			Channel:           "telegram",
-			ActiveWorkspaceID: 1,
-			ActiveSessionID:   &sessionID,
+		activeWorkspace: &core.ActiveWorkspace{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+		},
+		activeSession: &core.ActiveWorkspaceSession{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+			SessionID:   sessionID,
 		},
 		workspace: &core.Workspace{
 			ID:       1,
@@ -487,11 +527,16 @@ func TestSetAgent_KillsDifferentAgentSession(t *testing.T) {
 func TestGetStatus(t *testing.T) {
 	sessionID := int64(42)
 	store := &mockStore{
-		userContext: &core.UserContext{
-			SenderID:          "user1",
-			Channel:           "telegram",
-			ActiveWorkspaceID: 1,
-			ActiveSessionID:   &sessionID,
+		activeWorkspace: &core.ActiveWorkspace{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+		},
+		activeSession: &core.ActiveWorkspaceSession{
+			SenderID:    "user1",
+			Channel:     "telegram",
+			WorkspaceID: 1,
+			SessionID:   sessionID,
 		},
 		workspace: &core.Workspace{
 			ID:   1,

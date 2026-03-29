@@ -254,14 +254,10 @@ func NewStandaloneHarness() (*TestHarness, func(), error) {
 		return nil, nil, fmt.Errorf("updating workspace metadata: %w", err)
 	}
 
-	_, err = db.ExecContext(ctx,
-		"INSERT INTO user_context (sender_id, channel, active_workspace_id, updated_at) VALUES (?, ?, ?, ?)",
-		"test-sender", "test", ws.ID, time.Now().UTC(),
-	)
-	if err != nil {
+	if err := st.SetActiveWorkspace(ctx, "test-sender", "test", ws.ID); err != nil {
 		_ = db.Close()
 		cleanup()
-		return nil, nil, fmt.Errorf("creating user context: %w", err)
+		return nil, nil, fmt.Errorf("setting active workspace: %w", err)
 	}
 
 	harness := &TestHarness{
@@ -310,15 +306,17 @@ func (h *TestHarness) SendMessageStandalone(ctx context.Context, senderID, conte
 		return resp, nil
 	}
 
-	uc, err := h.Store.GetUserContext(ctx, senderID, "test")
+	active, err := h.Store.GetActiveWorkspace(ctx, senderID, "test")
 	if err != nil {
 		return "", nil
 	}
-	if uc.ActiveSessionID == nil {
+
+	activeSession, err := h.Store.GetActiveSessionForWorkspace(ctx, senderID, "test", active.WorkspaceID)
+	if err != nil {
 		return "", nil
 	}
 
-	sess, err := h.Store.GetSessionByID(ctx, *uc.ActiveSessionID)
+	sess, err := h.Store.GetSessionByID(ctx, activeSession.SessionID)
 	if err != nil {
 		return "", nil
 	}

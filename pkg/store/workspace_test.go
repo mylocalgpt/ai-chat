@@ -118,3 +118,54 @@ func TestListWorkspacesEmpty(t *testing.T) {
 		t.Errorf("len = %d, want 0", len(list))
 	}
 }
+
+func TestSetActiveWorkspaceKeepsOtherWorkspaceSessionMappings(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	w1, err := s.CreateWorkspace(ctx, "ws-1", "/tmp/ws1", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace 1: %v", err)
+	}
+	w2, err := s.CreateWorkspace(ctx, "ws-2", "/tmp/ws2", "")
+	if err != nil {
+		t.Fatalf("CreateWorkspace 2: %v", err)
+	}
+	sess1, err := s.CreateSession(ctx, w1.ID, "opencode", "a1b2", "tmux-1")
+	if err != nil {
+		t.Fatalf("CreateSession 1: %v", err)
+	}
+	sess2, err := s.CreateSession(ctx, w2.ID, "opencode", "c3d4", "tmux-2")
+	if err != nil {
+		t.Fatalf("CreateSession 2: %v", err)
+	}
+
+	if err := s.SetActiveWorkspace(ctx, "user1", "telegram", w1.ID); err != nil {
+		t.Fatalf("SetActiveWorkspace 1: %v", err)
+	}
+	if err := s.SetActiveSessionForWorkspace(ctx, "user1", "telegram", w1.ID, sess1.ID); err != nil {
+		t.Fatalf("SetActiveSessionForWorkspace 1: %v", err)
+	}
+	if err := s.SetActiveSessionForWorkspace(ctx, "user1", "telegram", w2.ID, sess2.ID); err != nil {
+		t.Fatalf("SetActiveSessionForWorkspace 2: %v", err)
+	}
+
+	if err := s.SetActiveWorkspace(ctx, "user1", "telegram", w2.ID); err != nil {
+		t.Fatalf("SetActiveWorkspace 2: %v", err)
+	}
+
+	active1, err := s.GetActiveSessionForWorkspace(ctx, "user1", "telegram", w1.ID)
+	if err != nil {
+		t.Fatalf("GetActiveSessionForWorkspace 1: %v", err)
+	}
+	if active1.SessionID != sess1.ID {
+		t.Fatalf("session_id = %d, want %d", active1.SessionID, sess1.ID)
+	}
+	active2, err := s.GetActiveSessionForWorkspace(ctx, "user1", "telegram", w2.ID)
+	if err != nil {
+		t.Fatalf("GetActiveSessionForWorkspace 2: %v", err)
+	}
+	if active2.SessionID != sess2.ID {
+		t.Fatalf("session_id = %d, want %d", active2.SessionID, sess2.ID)
+	}
+}

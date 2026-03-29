@@ -80,13 +80,9 @@ func NewTestHarness(t interface {
 		t.Fatalf("updating workspace metadata: %v", err)
 	}
 
-	_, err = db.ExecContext(ctx,
-		"INSERT INTO user_context (sender_id, channel, active_workspace_id, updated_at) VALUES (?, ?, ?, ?)",
-		"test-sender", "test", ws.ID, time.Now().UTC(),
-	)
-	if err != nil {
+	if err := st.SetActiveWorkspace(ctx, "test-sender", "test", ws.ID); err != nil {
 		_ = db.Close()
-		t.Fatalf("creating user context: %v", err)
+		t.Fatalf("setting active workspace: %v", err)
 	}
 
 	return &TestHarness{
@@ -115,15 +111,17 @@ func (h *TestHarness) SendMessage(ctx context.Context, senderID, content string)
 		return resp, nil
 	}
 
-	uc, err := h.Store.GetUserContext(ctx, senderID, "test")
+	active, err := h.Store.GetActiveWorkspace(ctx, senderID, "test")
 	if err != nil {
 		return "", nil
 	}
-	if uc.ActiveSessionID == nil {
+
+	activeSession, err := h.Store.GetActiveSessionForWorkspace(ctx, senderID, "test", active.WorkspaceID)
+	if err != nil {
 		return "", nil
 	}
 
-	sess, err := h.Store.GetSessionByID(ctx, *uc.ActiveSessionID)
+	sess, err := h.Store.GetSessionByID(ctx, activeSession.SessionID)
 	if err != nil {
 		return "", nil
 	}

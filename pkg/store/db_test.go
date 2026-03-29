@@ -24,7 +24,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 		t.Fatalf("Migrate failed: %v", err)
 	}
 
-	tables := []string{"workspaces", "messages", "sessions", "user_context", "_meta"}
+	tables := []string{"workspaces", "messages", "sessions", "active_workspaces", "active_workspace_sessions", "_meta"}
 	for _, table := range tables {
 		var name string
 		err := db.QueryRow(
@@ -106,7 +106,7 @@ func TestIndexesCreated(t *testing.T) {
 		t.Fatalf("Migrate failed: %v", err)
 	}
 
-	indexes := []string{"idx_messages_channel_sender", "idx_sessions_workspace_status"}
+	indexes := []string{"idx_messages_channel_sender", "idx_sessions_workspace_status", "idx_sessions_workspace_slug", "idx_active_workspace_sessions_session"}
 	for _, idx := range indexes {
 		var name string
 		err := db.QueryRow(

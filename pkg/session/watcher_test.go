@@ -15,29 +15,33 @@ import (
 type watcherMockStore struct {
 	sessions         map[string]*core.Session
 	sessionErr       error
-	userContext      *core.UserContext
-	userContextErr   error
-	userContextCalls []int64
+	activeSession    *core.ActiveWorkspaceSession
+	activeSessionErr error
+	activeCalls      []int64
 }
 
-func (m *watcherMockStore) GetUserContext(_ context.Context, _, _ string) (*core.UserContext, error) {
+func (m *watcherMockStore) GetActiveWorkspace(_ context.Context, _, _ string) (*core.ActiveWorkspace, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *watcherMockStore) GetUserContextBySession(_ context.Context, sessionID int64) (*core.UserContext, error) {
-	m.userContextCalls = append(m.userContextCalls, sessionID)
-	return m.userContext, m.userContextErr
+func (m *watcherMockStore) GetActiveWorkspaceSessionBySessionID(_ context.Context, sessionID int64) (*core.ActiveWorkspaceSession, error) {
+	m.activeCalls = append(m.activeCalls, sessionID)
+	return m.activeSession, m.activeSessionErr
 }
 
 func (m *watcherMockStore) SetActiveWorkspace(_ context.Context, _, _ string, _ int64) error {
 	return nil
 }
 
-func (m *watcherMockStore) SetActiveSession(_ context.Context, _, _ string, _ int64) error {
+func (m *watcherMockStore) GetActiveSessionForWorkspace(_ context.Context, _, _ string, _ int64) (*core.ActiveWorkspaceSession, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *watcherMockStore) SetActiveSessionForWorkspace(_ context.Context, _, _ string, _, _ int64) error {
 	return nil
 }
 
-func (m *watcherMockStore) ClearActiveSession(_ context.Context, _, _ string) error {
+func (m *watcherMockStore) ClearActiveSessionForWorkspace(_ context.Context, _, _ string, _ int64) error {
 	return nil
 }
 
@@ -71,6 +75,10 @@ func (m *watcherMockStore) GetSessionByTmuxSession(_ context.Context, tmuxSessio
 }
 
 func (m *watcherMockStore) GetActiveSession(_ context.Context, _ int64) (*core.Session, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *watcherMockStore) GetActiveSessionForSender(_ context.Context, _, _ string, _ int64) (*core.Session, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -111,7 +119,7 @@ func TestWatcher_EmitsEventOnWrite(t *testing.T) {
 		sessions: map[string]*core.Session{
 			"test-session": {ID: sessionID, TmuxSession: "test-session"},
 		},
-		userContext: &core.UserContext{
+		activeSession: &core.ActiveWorkspaceSession{
 			SenderID: "user1",
 			Channel:  "telegram",
 		},
@@ -123,6 +131,7 @@ func TestWatcher_EmitsEventOnWrite(t *testing.T) {
 	defer cancel()
 
 	go func() { _ = w.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
 
 	info := core.SessionInfo{
 		Name:      "test-session",
@@ -168,7 +177,7 @@ func TestWatcher_NoDuplicateEvents(t *testing.T) {
 		sessions: map[string]*core.Session{
 			"test-session": {ID: sessionID, TmuxSession: "test-session"},
 		},
-		userContext: &core.UserContext{
+		activeSession: &core.ActiveWorkspaceSession{
 			SenderID: "user1",
 			Channel:  "telegram",
 		},
@@ -180,6 +189,7 @@ func TestWatcher_NoDuplicateEvents(t *testing.T) {
 	defer cancel()
 
 	go func() { _ = w.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
 
 	info := core.SessionInfo{
 		Name:      "test-session",
@@ -232,7 +242,7 @@ func TestWatcher_MultipleFiles(t *testing.T) {
 		sessions: map[string]*core.Session{
 			"session-a": {ID: 1, TmuxSession: "session-a"},
 		},
-		userContext: &core.UserContext{
+		activeSession: &core.ActiveWorkspaceSession{
 			SenderID: "user1",
 			Channel:  "telegram",
 		},
@@ -244,6 +254,7 @@ func TestWatcher_MultipleFiles(t *testing.T) {
 	defer cancel()
 
 	go func() { _ = w.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
 
 	infoA := core.SessionInfo{Name: "session-a", Workspace: "lab", Agent: "opencode"}
 	_, err := executor.NewResponseFile(dir, infoA)
@@ -277,7 +288,7 @@ func TestWatcher_PollingFallback(t *testing.T) {
 		sessions: map[string]*core.Session{
 			"test-session": {ID: sessionID, TmuxSession: "test-session"},
 		},
-		userContext: &core.UserContext{
+		activeSession: &core.ActiveWorkspaceSession{
 			SenderID: "user1",
 			Channel:  "telegram",
 		},
@@ -296,9 +307,9 @@ func TestWatcher_SessionNotFound(t *testing.T) {
 	ch := make(chan core.ResponseEvent, 10)
 
 	store := &watcherMockStore{
-		sessions:    map[string]*core.Session{},
-		sessionErr:  errors.New("not found"),
-		userContext: &core.UserContext{SenderID: "user1", Channel: "telegram"},
+		sessions:      map[string]*core.Session{},
+		sessionErr:    errors.New("not found"),
+		activeSession: &core.ActiveWorkspaceSession{SenderID: "user1", Channel: "telegram"},
 	}
 
 	w := NewWatcher(dir, ch, store)
@@ -307,6 +318,7 @@ func TestWatcher_SessionNotFound(t *testing.T) {
 	defer cancel()
 
 	go func() { _ = w.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
 
 	info := core.SessionInfo{Name: "unknown-session", Workspace: "lab", Agent: "opencode"}
 	_, err := executor.NewResponseFile(dir, info)

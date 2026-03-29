@@ -192,7 +192,7 @@ func (t *TelegramAdapter) handleSpecialCommands(ctx context.Context, msg core.In
 	}
 
 	if content == "/sessions" {
-		uc, err := t.store.GetUserContext(ctx, msg.SenderID, msg.Channel)
+		active, err := t.store.GetActiveWorkspace(ctx, msg.SenderID, msg.Channel)
 		if err != nil {
 			chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
 			_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
@@ -202,7 +202,7 @@ func (t *TelegramAdapter) handleSpecialCommands(ctx context.Context, msg core.In
 			return true
 		}
 
-		sessions, err := t.store.ListSessionsForWorkspace(ctx, uc.ActiveWorkspaceID)
+		sessions, err := t.store.ListSessionsForWorkspace(ctx, active.WorkspaceID)
 		if err != nil {
 			slog.Error("listing sessions", "error", err)
 			return true
@@ -211,7 +211,7 @@ func (t *TelegramAdapter) handleSpecialCommands(ctx context.Context, msg core.In
 		var previews []SessionPreview
 		for _, s := range sessions {
 			previews = append(previews, SessionPreview{
-				Name:   fmt.Sprintf("ai-chat-%d-%s", uc.ActiveWorkspaceID, s.Slug),
+				Name:   fmt.Sprintf("ai-chat-%d-%s", active.WorkspaceID, s.Slug),
 				Status: s.Status,
 				Age:    formatAge(s.LastActivity),
 			})

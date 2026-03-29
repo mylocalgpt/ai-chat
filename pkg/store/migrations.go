@@ -6,12 +6,9 @@ import (
 	"strconv"
 )
 
-// migrations is a sequential list of schema migration functions.
-// Each runs in its own transaction. Append new migrations to the end.
+// migrations defines the fresh schema bootstrap for resettable databases.
 var migrations = []func(*sql.Tx) error{
 	migration001,
-	migration003,
-	migration004,
 }
 
 // Migrate runs all pending migrations against the database.
@@ -75,7 +72,7 @@ func schemaVersion(db *sql.DB) (int, error) {
 	return v, nil
 }
 
-// migration001 creates the initial schema: workspaces, messages, sessions, user_context.
+// migration001 creates the reset schema used by the current runtime.
 func migration001(tx *sql.Tx) error {
 	stmts := []string{
 		`CREATE TABLE workspaces (
@@ -106,6 +103,8 @@ func migration001(tx *sql.Tx) error {
 			id INTEGER PRIMARY KEY,
 			workspace_id INTEGER REFERENCES workspaces(id),
 			agent TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			agent_session_id TEXT DEFAULT '',
 			tmux_session TEXT,
 			status TEXT DEFAULT 'active',
 			started_at TEXT DEFAULT (datetime('now')),
@@ -113,45 +112,32 @@ func migration001(tx *sql.Tx) error {
 		)`,
 
 		`CREATE INDEX idx_sessions_workspace_status ON sessions(workspace_id, status)`,
+		`CREATE UNIQUE INDEX idx_sessions_workspace_slug ON sessions(workspace_id, slug)`,
 
-		`CREATE TABLE user_context (
+		`CREATE TABLE active_workspaces (
 			sender_id TEXT NOT NULL,
 			channel TEXT NOT NULL,
-			active_workspace_id INTEGER REFERENCES workspaces(id),
+			workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
 			updated_at TEXT DEFAULT (datetime('now')),
 			PRIMARY KEY (sender_id, channel)
 		)`,
+
+		`CREATE TABLE active_workspace_sessions (
+			sender_id TEXT NOT NULL,
+			channel TEXT NOT NULL,
+			workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+			session_id INTEGER NOT NULL REFERENCES sessions(id),
+			updated_at TEXT DEFAULT (datetime('now')),
+			PRIMARY KEY (sender_id, channel, workspace_id)
+		)`,
+
+		`CREATE UNIQUE INDEX idx_active_workspace_sessions_session ON active_workspace_sessions(session_id)`,
 	}
 
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("executing %q: %w", stmt[:40], err)
 		}
-	}
-	return nil
-}
-
-// migration003 adds slug and agent_session_id columns to sessions.
-func migration003(tx *sql.Tx) error {
-	stmts := []string{
-		`ALTER TABLE sessions ADD COLUMN slug TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE sessions ADD COLUMN agent_session_id TEXT DEFAULT ''`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_workspace_slug ON sessions(workspace_id, slug)`,
-	}
-
-	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
-			return fmt.Errorf("executing %q: %w", stmt[:40], err)
-		}
-	}
-	return nil
-}
-
-// migration004 adds active_session_id column to user_context.
-func migration004(tx *sql.Tx) error {
-	_, err := tx.Exec(`ALTER TABLE user_context ADD COLUMN active_session_id INTEGER REFERENCES sessions(id)`)
-	if err != nil {
-		return fmt.Errorf("executing migration004: %w", err)
 	}
 	return nil
 }

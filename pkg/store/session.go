@@ -28,6 +28,7 @@ func (s *Store) CreateSession(ctx context.Context, workspaceID int64, agent, slu
 }
 
 // GetActiveSession returns the most recent active session for a workspace.
+// It remains for executor and MCP workspace-scoped operations only.
 func (s *Store) GetActiveSession(ctx context.Context, workspaceID int64) (*core.Session, error) {
 	sess, err := s.scanSession(s.db.QueryRowContext(ctx,
 		`SELECT id, workspace_id, agent, slug, agent_session_id, tmux_session, status, started_at, last_activity
@@ -42,6 +43,16 @@ func (s *Store) GetActiveSession(ctx context.Context, workspaceID int64) (*core.
 		return nil, fmt.Errorf("getting active session: %w", err)
 	}
 	return sess, nil
+}
+
+// GetActiveSessionForSender resolves the active session selected for a sender,
+// channel, and workspace through active_workspace_sessions.
+func (s *Store) GetActiveSessionForSender(ctx context.Context, senderID, channel string, workspaceID int64) (*core.Session, error) {
+	active, err := s.GetActiveSessionForWorkspace(ctx, senderID, channel, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetSessionByID(ctx, active.SessionID)
 }
 
 // UpdateSessionStatus changes the status of a session.
