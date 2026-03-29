@@ -16,7 +16,7 @@ type SessionManager interface {
 	ClearSession(ctx context.Context, senderID, channel string) (*core.SessionInfo, error)
 	KillSession(ctx context.Context, senderID, channel string) error
 	GetStatus(ctx context.Context, senderID, channel string) (*StatusInfo, error)
-	SetAgent(ctx context.Context, senderID, channel, agent string) error
+	SetAgent(ctx context.Context, senderID, channel, agent string) (*core.SessionInfo, error)
 }
 
 type StatusInfo struct {
@@ -276,7 +276,7 @@ func (r *Router) handleAgent(ctx context.Context, msg core.InboundMessage, args 
 	}
 
 	agent := args[0]
-	if err := r.sessionMgr.SetAgent(ctx, msg.SenderID, msg.Channel, agent); err != nil {
+	if _, err := r.sessionMgr.SetAgent(ctx, msg.SenderID, msg.Channel, agent); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return "No active workspace. Use /switch <name> first.", nil
 		}

@@ -138,10 +138,10 @@ func (m *mockSessionManager) GetStatus(ctx context.Context, senderID, channel st
 	return &StatusInfo{Agent: "opencode", SessionCount: 1}, nil
 }
 
-func (m *mockSessionManager) SetAgent(ctx context.Context, senderID, channel, agent string) error {
+func (m *mockSessionManager) SetAgent(ctx context.Context, senderID, channel, agent string) (*core.SessionInfo, error) {
 	m.setAgentCalled = true
 	m.setAgentName = agent
-	return m.setAgentErr
+	return nil, m.setAgentErr
 }
 
 func TestRoute_NonCommand(t *testing.T) {

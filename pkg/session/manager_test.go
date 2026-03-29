@@ -30,6 +30,8 @@ type mockStore struct {
 	touchErr            error
 	createSessionErr    error
 	updateMetadataErr   error
+	setActiveSessionIDs []int64
+	clearedWorkspaceIDs []int64
 }
 
 func (m *mockStore) GetActiveWorkspace(_ context.Context, _, _ string) (*core.ActiveWorkspace, error) {
@@ -48,11 +50,13 @@ func (m *mockStore) GetActiveSessionForWorkspace(_ context.Context, _, _ string,
 	return m.activeSession, m.activeSessionErr
 }
 
-func (m *mockStore) SetActiveSessionForWorkspace(_ context.Context, _, _ string, _, _ int64) error {
+func (m *mockStore) SetActiveSessionForWorkspace(_ context.Context, _, _ string, workspaceID, sessionID int64) error {
+	m.setActiveSessionIDs = append(m.setActiveSessionIDs, workspaceID, sessionID)
 	return m.setActiveSessionErr
 }
 
-func (m *mockStore) ClearActiveSessionForWorkspace(_ context.Context, _, _ string, _ int64) error {
+func (m *mockStore) ClearActiveSessionForWorkspace(_ context.Context, _, _ string, workspaceID int64) error {
+	m.clearedWorkspaceIDs = append(m.clearedWorkspaceIDs, workspaceID)
 	return m.clearActiveSession
 }
 
@@ -208,7 +212,7 @@ func TestGetOrCreateActiveSession_CreatesNewWhenNone(t *testing.T) {
 
 	m := NewManager(store, registry, nil, ManagerConfig{})
 
-	sess, info, err := m.GetOrCreateActiveSession(context.Background(), "user1", "telegram")
+	sess, info, err := m.GetOrCreateActiveSession(context.Background(), "user1", "telegram", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -259,7 +263,7 @@ func TestGetOrCreateActiveSession_ReusesExisting(t *testing.T) {
 
 	m := NewManager(store, registry, nil, ManagerConfig{})
 
-	sess, _, err := m.GetOrCreateActiveSession(context.Background(), "user1", "telegram")
+	sess, _, err := m.GetOrCreateActiveSession(context.Background(), "user1", "telegram", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -305,7 +309,7 @@ func TestGetOrCreateActiveSession_CreatesNewWhenDead(t *testing.T) {
 
 	m := NewManager(store, registry, nil, ManagerConfig{})
 
-	sess, _, err := m.GetOrCreateActiveSession(context.Background(), "user1", "telegram")
+	sess, _, err := m.GetOrCreateActiveSession(context.Background(), "user1", "telegram", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -406,6 +410,9 @@ func TestClearSession_CopilotStateless(t *testing.T) {
 	if info == nil {
 		t.Fatal("expected session info, got nil")
 	}
+	if info.Agent != "copilot" {
+		t.Fatalf("expected clear to preserve agent, got %q", info.Agent)
+	}
 }
 
 func TestKillSession(t *testing.T) {
@@ -471,7 +478,7 @@ func TestSetAgent_UnknownAgent(t *testing.T) {
 
 	m := NewManager(store, registry, nil, ManagerConfig{})
 
-	err := m.SetAgent(context.Background(), "user1", "telegram", "unknown")
+	_, err := m.SetAgent(context.Background(), "user1", "telegram", "unknown")
 	if err == nil {
 		t.Fatal("expected error for unknown agent")
 	}
@@ -518,7 +525,7 @@ func TestSetAgent_KillsDifferentAgentSession(t *testing.T) {
 
 	m := NewManager(store, registry, nil, ManagerConfig{})
 
-	err := m.SetAgent(context.Background(), "user1", "telegram", "copilot")
+	_, err := m.SetAgent(context.Background(), "user1", "telegram", "copilot")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -569,6 +576,75 @@ func TestGetStatus(t *testing.T) {
 	}
 	if info.SessionCount != 3 {
 		t.Errorf("expected session count 3, got %d", info.SessionCount)
+	}
+}
+
+func TestCreateSessionForSenderActivatesNewSession(t *testing.T) {
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		workspace:       &core.Workspace{ID: 1, Name: "lab", Path: "/path/to/lab"},
+		session:         &core.Session{ID: 77, WorkspaceID: 1, Agent: "opencode", TmuxSession: "ai-chat-lab-z9y8", Slug: "z9y8"},
+	}
+	adapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{adapters: map[string]executor.AgentAdapter{"opencode": adapter}, agents: []string{"opencode"}}
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	info, err := m.CreateSessionForSender(context.Background(), "user1", "telegram", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info == nil || info.Name == "" {
+		t.Fatal("expected session info")
+	}
+	if len(store.setActiveSessionIDs) != 2 {
+		t.Fatalf("expected active session mapping update, got %v", store.setActiveSessionIDs)
+	}
+	if store.setActiveSessionIDs[0] != 1 || store.setActiveSessionIDs[1] != 77 {
+		t.Fatalf("unexpected mapping args: %v", store.setActiveSessionIDs)
+	}
+}
+
+func TestSwitchActiveSessionSetsRequestedMapping(t *testing.T) {
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		workspace:       &core.Workspace{ID: 1, Name: "lab", Path: "/path/to/lab"},
+		session:         &core.Session{ID: 88, WorkspaceID: 1, Agent: "opencode", TmuxSession: "ai-chat-lab-q1w2", Slug: "q1w2"},
+	}
+	adapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{adapters: map[string]executor.AgentAdapter{"opencode": adapter}, agents: []string{"opencode"}}
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	if err := m.SwitchActiveSession(context.Background(), "user1", "telegram", 1, 88); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(store.setActiveSessionIDs) != 2 {
+		t.Fatalf("expected mapping update, got %v", store.setActiveSessionIDs)
+	}
+	if store.setActiveSessionIDs[0] != 1 || store.setActiveSessionIDs[1] != 88 {
+		t.Fatalf("unexpected mapping args: %v", store.setActiveSessionIDs)
+	}
+}
+
+func TestGetStatusClearsStaleMapping(t *testing.T) {
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		activeSession:   &core.ActiveWorkspaceSession{SenderID: "user1", Channel: "telegram", WorkspaceID: 1, SessionID: 42},
+		workspace:       &core.Workspace{ID: 1, Name: "lab", Path: "/path/to/lab"},
+		sessionErr:      core.ErrNotFound,
+		count:           1,
+	}
+	registry := &mockRegistry{adapters: map[string]executor.AgentAdapter{}, agents: []string{"opencode"}}
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	info, err := m.GetStatus(context.Background(), "user1", "telegram")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.ActiveSession != nil {
+		t.Fatal("expected stale active session to be cleared")
+	}
+	if len(store.clearedWorkspaceIDs) == 0 || store.clearedWorkspaceIDs[0] != 1 {
+		t.Fatalf("expected stale mapping clear, got %v", store.clearedWorkspaceIDs)
 	}
 }
 
