@@ -457,3 +457,117 @@ func TestFindCodeFencesUnicode(t *testing.T) {
 		}
 	})
 }
+
+func TestFenceAt(t *testing.T) {
+	regions := []fenceRegion{
+		{start: 10, end: 50, openTag: `<pre><code class="language-go">`},
+		{start: 60, end: 100, openTag: `<pre><code>`},
+	}
+
+	tests := []struct {
+		name    string
+		pos     int
+		wantNil bool
+		wantTag string
+	}{
+		{"before all regions", 5, true, ""},
+		{"at first region start", 10, false, `<pre><code class="language-go">`},
+		{"inside first region", 30, false, `<pre><code class="language-go">`},
+		{"at first region end (exclusive)", 50, true, ""},
+		{"between regions", 55, true, ""},
+		{"at second region start", 60, false, `<pre><code>`},
+		{"inside second region", 80, false, `<pre><code>`},
+		{"at second region end (exclusive)", 100, true, ""},
+		{"after all regions", 120, true, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := fenceAt(tt.pos, regions)
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("expected nil, got region with openTag %q", got.openTag)
+				}
+			} else {
+				if got == nil {
+					t.Fatal("expected non-nil region, got nil")
+				}
+				if got.openTag != tt.wantTag {
+					t.Errorf("openTag: got %q, want %q", got.openTag, tt.wantTag)
+				}
+			}
+		})
+	}
+}
+
+func TestSplitMessageCodeFenceLanguagePreserved(t *testing.T) {
+	openTag := `<pre><code class="language-go">`
+	closeTag := `</code></pre>`
+	codeContent := strings.Repeat("x", 200)
+	input := openTag + codeContent + closeTag
+
+	chunks := SplitMessage(input, 80)
+
+	if len(chunks) < 3 {
+		t.Fatalf("expected at least 3 chunks, got %d", len(chunks))
+	}
+
+	for i, chunk := range chunks {
+		// Every chunk except the first should start with the language-aware open tag.
+		if i > 0 {
+			if !strings.HasPrefix(chunk, openTag) {
+				t.Errorf("chunk %d should start with %q, got prefix: %q", i, openTag, chunk[:min(len(chunk), 40)])
+			}
+		}
+		// Every chunk except the last should end with the close tag.
+		if i < len(chunks)-1 {
+			if !strings.HasSuffix(chunk, closeTag) {
+				t.Errorf("chunk %d should end with %q, got suffix: %q", i, closeTag, chunk[max(0, len(chunk)-20):])
+			}
+		}
+	}
+}
+
+func TestSplitMessageMultipleLanguages(t *testing.T) {
+	goOpen := `<pre><code class="language-go">`
+	pyOpen := `<pre><code class="language-python">`
+	closeTag := `</code></pre>`
+
+	goCode := strings.Repeat("g", 150)
+	pyCode := strings.Repeat("p", 150)
+
+	input := goOpen + goCode + closeTag + "\n\nSome text between blocks.\n\n" + pyOpen + pyCode + closeTag
+
+	chunks := SplitMessage(input, 100)
+
+	if len(chunks) < 3 {
+		t.Fatalf("expected at least 3 chunks, got %d", len(chunks))
+	}
+
+	// Track which language tags we see in reopened chunks.
+	sawGoReopen := false
+	sawPyReopen := false
+
+	for i, chunk := range chunks {
+		if i == 0 {
+			continue // first chunk starts at beginning, skip
+		}
+		if strings.HasPrefix(chunk, goOpen) {
+			sawGoReopen = true
+			// Verify it doesn't accidentally use the python tag.
+			if strings.HasPrefix(chunk, pyOpen) {
+				t.Errorf("chunk %d starts with python tag but should be go", i)
+			}
+		}
+		if strings.HasPrefix(chunk, pyOpen) {
+			sawPyReopen = true
+		}
+	}
+
+	if !sawGoReopen {
+		t.Error("expected at least one chunk to reopen with Go language tag")
+	}
+	if !sawPyReopen {
+		t.Error("expected at least one chunk to reopen with Python language tag")
+	}
+}
