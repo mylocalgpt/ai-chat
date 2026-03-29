@@ -24,6 +24,8 @@ type telegramBot interface {
 	SendMessage(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error)
 	SendChatAction(ctx context.Context, params *bot.SendChatActionParams) (bool, error)
 	SetMyCommands(ctx context.Context, params *bot.SetMyCommandsParams) (bool, error)
+	DeleteMessage(ctx context.Context, params *bot.DeleteMessageParams) (bool, error)
+	EditMessageText(ctx context.Context, params *bot.EditMessageTextParams) (*models.Message, error)
 }
 
 type telegramCallbackBot interface {
@@ -53,6 +55,10 @@ func (b *liveTelegramBot) SendChatAction(ctx context.Context, params *bot.SendCh
 
 func (b *liveTelegramBot) SetMyCommands(ctx context.Context, params *bot.SetMyCommandsParams) (bool, error) {
 	return b.inner.SetMyCommands(ctx, params)
+}
+
+func (b *liveTelegramBot) DeleteMessage(ctx context.Context, params *bot.DeleteMessageParams) (bool, error) {
+	return b.inner.DeleteMessage(ctx, params)
 }
 
 func (b *liveTelegramBot) AnswerCallbackQuery(ctx context.Context, params *bot.AnswerCallbackQueryParams) (bool, error) {

@@ -307,14 +307,18 @@ func (b *acceptanceTelegramBot) SetMyCommands(_ context.Context, params *bot.Set
 	return true, nil
 }
 
-func (b *acceptanceTelegramBot) AnswerCallbackQuery(_ context.Context, params *bot.AnswerCallbackQueryParams) (bool, error) {
-	b.callbackAnswers = append(b.callbackAnswers, params)
+func (b *acceptanceTelegramBot) DeleteMessage(_ context.Context, params *bot.DeleteMessageParams) (bool, error) {
 	return true, nil
 }
 
 func (b *acceptanceTelegramBot) EditMessageText(_ context.Context, params *bot.EditMessageTextParams) (*models.Message, error) {
 	b.editedMessages = append(b.editedMessages, params)
 	return &models.Message{ID: params.MessageID, Chat: models.Chat{ID: b.chatID}, Text: params.Text}, nil
+}
+
+func (b *acceptanceTelegramBot) AnswerCallbackQuery(_ context.Context, params *bot.AnswerCallbackQueryParams) (bool, error) {
+	b.callbackAnswers = append(b.callbackAnswers, params)
+	return true, nil
 }
 
 func (b *acceptanceTelegramBot) lastSentMessageID() int {
