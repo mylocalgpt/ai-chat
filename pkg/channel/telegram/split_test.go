@@ -740,6 +740,132 @@ func TestScanTags(t *testing.T) {
 	})
 }
 
+func TestRuneSliceMatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		runes   []rune
+		pos     int
+		pattern []rune
+		want    bool
+	}{
+		{"match at start", []rune("hello"), 0, []rune("hel"), true},
+		{"match in middle", []rune("hello"), 2, []rune("llo"), true},
+		{"no match", []rune("hello"), 0, []rune("xyz"), false},
+		{"pos out of bounds", []rune("hi"), 5, []rune("h"), false},
+		{"negative pos", []rune("hi"), -1, []rune("h"), false},
+		{"pattern too long", []rune("hi"), 1, []rune("ijk"), false},
+		{"empty pattern", []rune("hi"), 0, []rune(""), true},
+		{"unicode match", []rune("日本語abc"), 3, []rune("abc"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runeSliceMatch(tt.runes, tt.pos, tt.pattern)
+			if got != tt.want {
+				t.Errorf("runeSliceMatch(%q, %d, %q) = %v, want %v",
+					string(tt.runes), tt.pos, string(tt.pattern), got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindBestSplitPointSemanticPriority(t *testing.T) {
+	// Build input where both a heading boundary and a paragraph break
+	// exist in the search range (back half of maxLen). The heading boundary
+	// should win because it has higher priority.
+	//
+	// Layout (maxLen=100, search range 50..100):
+	//   40 chars of filler
+	//   \n\n (paragraph break at rune 40-41)  -- will be in range if search includes it
+	//   more filler to push heading into range
+	//   \n\n<b>Heading  (heading boundary)
+	//   ... rest
+	//
+	// We want the heading boundary at ~rune 60, and a paragraph break at ~rune 55.
+	// Both in the 50..100 search range.
+
+	filler1 := strings.Repeat("a", 53)
+	paragraphBreak := "\n\n"
+	filler2 := strings.Repeat("b", 5)
+	headingBoundary := "\n\n<b>Section Title</b>"
+	filler3 := strings.Repeat("c", 50)
+
+	input := filler1 + paragraphBreak + filler2 + headingBoundary + filler3
+	runes := []rune(input)
+	maxLen := 100
+
+	splitPoint := findBestSplitPoint(runes, maxLen, nil)
+
+	// The heading pattern \n\n<b> starts at position 53+2+5 = 60.
+	// findBestSplitPoint should return 60+1 = 61 (after the first \n).
+	headingPos := len([]rune(filler1 + paragraphBreak + filler2))
+	expectedSplit := headingPos + 1 // after the first \n of \n\n<b>
+
+	if splitPoint != expectedSplit {
+		t.Errorf("expected split at heading boundary (pos %d), got %d", expectedSplit, splitPoint)
+	}
+
+	// Verify the paragraph break is also in range (would have been chosen without heading priority).
+	paragraphPos := len([]rune(filler1))
+	if paragraphPos < maxLen/2 || paragraphPos > maxLen {
+		t.Errorf("test setup: paragraph break at %d should be in search range [%d, %d]",
+			paragraphPos, maxLen/2, maxLen)
+	}
+}
+
+func TestSplitMessageAtBlockquoteEnd(t *testing.T) {
+	// Build a message with a long blockquote followed by more content.
+	// The split should happen after </blockquote>\n when possible.
+	quote := strings.Repeat("q", 60)
+	afterQuote := strings.Repeat("x", 60)
+	input := "<blockquote>" + quote + "</blockquote>\n" + afterQuote
+
+	maxLen := 100
+	chunks := SplitMessage(input, maxLen)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	// First chunk should end with the blockquote (possibly with close tags).
+	// The split should have happened after </blockquote>\n
+	if !strings.Contains(chunks[0], "</blockquote>") {
+		t.Errorf("first chunk should contain </blockquote>, got: %q", chunks[0])
+	}
+
+	// Second chunk should not start with content from inside the blockquote.
+	// After TrimLeft, it should start with the afterQuote content (x's) or a reopened tag.
+	if strings.Contains(chunks[1], "</blockquote>") {
+		t.Errorf("second chunk should not contain </blockquote>, got: %q", chunks[1])
+	}
+}
+
+func TestSplitMessageAtCodeBlockEnd(t *testing.T) {
+	// Build a message where a code block ends near the split zone,
+	// followed by more text. The split should happen after </code></pre>\n
+	// rather than mid-paragraph.
+	code := strings.Repeat("c", 50)
+	afterCode := strings.Repeat("x", 60)
+	input := "<pre><code>" + code + "</code></pre>\nSome paragraph. " + afterCode
+
+	maxLen := 100
+	chunks := SplitMessage(input, maxLen)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	// First chunk should contain the complete code block.
+	if !strings.Contains(chunks[0], "</code></pre>") {
+		t.Errorf("first chunk should contain </code></pre>, got: %q", chunks[0])
+	}
+
+	// The second chunk should start with the content after the code block.
+	if strings.HasPrefix(chunks[1], "<pre><code>") {
+		t.Errorf("second chunk should NOT reopen a code fence (split should be outside fence), got: %q", chunks[1][:min(len(chunks[1]), 40)])
+	}
+}
+
 func TestSplitMessageHTMLTagTracking(t *testing.T) {
 	// <b> + 200 chars + </b>, maxLen 80
 	content := strings.Repeat("x", 200)

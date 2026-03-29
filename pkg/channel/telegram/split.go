@@ -216,6 +216,19 @@ func splitRecursive(text string, maxLen int, regions []fenceRegion) []string {
 	return chunks
 }
 
+// runeSliceMatch checks if pattern occurs at position pos in runes.
+func runeSliceMatch(runes []rune, pos int, pattern []rune) bool {
+	if pos < 0 || pos+len(pattern) > len(runes) {
+		return false
+	}
+	for i, r := range pattern {
+		if runes[pos+i] != r {
+			return false
+		}
+	}
+	return true
+}
+
 func findBestSplitPoint(runes []rune, maxLen int, regions []fenceRegion) int {
 	searchStart := maxLen / 2
 	searchEnd := maxLen
@@ -231,6 +244,33 @@ func findBestSplitPoint(runes []rune, maxLen int, regions []fenceRegion) int {
 		}
 	}
 
+	// Priority 1: Before a heading (pattern: \n\n<b> in the search range).
+	// Split at the position after the first \n, so the current chunk ends with \n
+	// and the next chunk (after TrimLeft) starts with <b>.
+	headingPattern := []rune("\n\n<b>")
+	for i := searchEnd; i >= searchStart; i-- {
+		if runeSliceMatch(runes, i, headingPattern) {
+			return i + 1 // split after the first \n
+		}
+	}
+
+	// Priority 2: After </blockquote>\n - split after the \n.
+	bqPattern := []rune("</blockquote>\n")
+	for i := searchEnd; i >= searchStart; i-- {
+		if runeSliceMatch(runes, i, bqPattern) {
+			return i + len(bqPattern)
+		}
+	}
+
+	// Priority 3: After </code></pre>\n - split after the \n.
+	codeEndPattern := []rune("</code></pre>\n")
+	for i := searchEnd; i >= searchStart; i-- {
+		if runeSliceMatch(runes, i, codeEndPattern) {
+			return i + len(codeEndPattern)
+		}
+	}
+
+	// Priority 4: Double newline (paragraph break).
 	for i := searchEnd; i >= searchStart; i-- {
 		if i+1 < len(runes) && runes[i] == '\n' && runes[i+1] == '\n' {
 			return i + 2
@@ -240,18 +280,21 @@ func findBestSplitPoint(runes []rune, maxLen int, regions []fenceRegion) int {
 		}
 	}
 
+	// Priority 5: Single newline.
 	for i := searchEnd; i >= searchStart; i-- {
 		if runes[i] == '\n' {
 			return i + 1
 		}
 	}
 
+	// Priority 6: Space.
 	for i := searchEnd; i >= searchStart; i-- {
 		if runes[i] == ' ' {
 			return i + 1
 		}
 	}
 
+	// Priority 7: Hard cut.
 	return 0
 }
 
