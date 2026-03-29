@@ -104,6 +104,10 @@ func (m *mockStore) ListSessions(_ context.Context) ([]core.Session, error) {
 	return result, nil
 }
 
+func (m *mockStore) GetWorkspaceByID(_ context.Context, id int64) (*core.Workspace, error) {
+	return &core.Workspace{ID: id, Name: "mock-workspace", Path: "/tmp/mock"}, nil
+}
+
 func TestExecuteRemoteWorkspaceReturnsError(t *testing.T) {
 	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy()), "")
 
@@ -120,8 +124,8 @@ func TestSessionInfoEnrichment(t *testing.T) {
 
 	st := newMockStore()
 	st.sessions = []*core.Session{
-		{ID: 1, WorkspaceID: 1, Agent: "opencode", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
-		{ID: 2, WorkspaceID: 2, Agent: "opencode", Slug: "c3d4", TmuxSession: "ai-chat-old-c3d4", Status: string(core.SessionCrashed)},
+		{ID: 1, WorkspaceID: 1, Agent: "opencode-tmux", Slug: "a1b2", TmuxSession: "ai-chat-proj-a1b2", Status: string(core.SessionActive)},
+		{ID: 2, WorkspaceID: 2, Agent: "opencode-tmux", Slug: "c3d4", TmuxSession: "ai-chat-old-c3d4", Status: string(core.SessionCrashed)},
 	}
 
 	exec := NewExecutor(st, tmx, NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy()), "")

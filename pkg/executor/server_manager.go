@@ -225,6 +225,13 @@ func (sm *ServerManager) startServer(workspace string) (*ServerHandle, error) {
 		return nil, fmt.Errorf("start server: %w", err)
 	}
 
+	// Drain remaining stdout so the process never blocks on writes.
+	// The waitForServerURL goroutine stops being read after the URL is found;
+	// without this drain the OS pipe buffer fills and the process hangs.
+	go func() {
+		_, _ = io.Copy(io.Discard, stdout)
+	}()
+
 	handle := &ServerHandle{
 		URL:       url,
 		Port:      port,

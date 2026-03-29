@@ -30,6 +30,7 @@ type sessionStore interface {
 	UpdateSessionStatus(ctx context.Context, id int64, status string) error
 	TouchSession(ctx context.Context, id int64) error
 	ListSessions(ctx context.Context) ([]core.Session, error)
+	GetWorkspaceByID(ctx context.Context, id int64) (*core.Workspace, error)
 }
 
 type SessionLiveInfo struct {
@@ -315,16 +316,29 @@ func (e *Executor) ListSessions(ctx context.Context) ([]SessionLiveInfo, error) 
 	infos := make([]SessionLiveInfo, len(sessions))
 	for i, sess := range sessions {
 		alive := false
-		if sess.TmuxSession != "" {
-			alive = e.tmux.HasSession(sess.TmuxSession)
-		} else if adapter, err := e.registry.GetAdapter(sess.Agent); err == nil {
-			info := core.SessionInfo{
-				Name:           sess.TmuxSession,
-				Slug:           sess.Slug,
-				Agent:          sess.Agent,
-				AgentSessionID: sess.AgentSessionID,
+		if adapter, adapterErr := e.registry.GetAdapter(sess.Agent); adapterErr == nil {
+			if _, isStreaming := adapter.(StreamingAdapter); isStreaming {
+				// Serve-based sessions: check server health via the adapter.
+				// Look up the workspace path for the server manager key.
+				var workspacePath string
+				if ws, wsErr := e.store.GetWorkspaceByID(ctx, sess.WorkspaceID); wsErr == nil {
+					workspacePath = ws.Path
+				}
+				info := core.SessionInfo{
+					Name:           sess.TmuxSession,
+					Slug:           sess.Slug,
+					Agent:          sess.Agent,
+					AgentSessionID: sess.AgentSessionID,
+					WorkspacePath:  workspacePath,
+				}
+				alive = adapter.IsAlive(info)
+			} else if sess.TmuxSession != "" {
+				// Tmux-based sessions: check tmux session existence.
+				alive = e.tmux.HasSession(sess.TmuxSession)
 			}
-			alive = adapter.IsAlive(info)
+		} else if sess.TmuxSession != "" {
+			// Adapter not found; fall back to tmux check.
+			alive = e.tmux.HasSession(sess.TmuxSession)
 		}
 		infos[i] = SessionLiveInfo{
 			Session: sess,
