@@ -722,3 +722,48 @@ func TestHandleSecurityDecisionApprovedSendsMessage(t *testing.T) {
 		t.Fatalf("unexpected messages: %+v", rf.Messages)
 	}
 }
+
+func TestHandleSecurityDecisionUnauthorizedAttemptDoesNotConsumeToken(t *testing.T) {
+	responsesDir := filepath.Join(t.TempDir(), "responses")
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		workspace:       &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()},
+		session:         &core.Session{ID: 42, WorkspaceID: 1, Agent: "opencode", TmuxSession: "ai-chat-lab-a3f2", Slug: "a3f2"},
+	}
+	adapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{adapters: map[string]executor.AgentAdapter{"opencode": adapter}, agents: []string{"opencode"}}
+	m := NewManager(store, registry, executor.NewSecurityProxy(), ManagerConfig{ResponsesDir: responsesDir})
+	if _, err := executor.NewResponseFile(responsesDir, *m.buildSessionInfo(store.workspace, store.session)); err != nil {
+		t.Fatalf("creating response file: %v", err)
+	}
+
+	err := m.Send(context.Background(), "user1", "telegram", "my password is hunter2")
+	var decisionErr *core.SecurityDecisionError
+	if !errors.As(err, &decisionErr) {
+		t.Fatalf("expected security decision error, got %v", err)
+	}
+
+	text, err := m.HandleSecurityDecision(context.Background(), "user2", "telegram", decisionErr.Decision.PendingID, true)
+	if err != nil {
+		t.Fatalf("unexpected error from unauthorized decision: %v", err)
+	}
+	if text != "That confirmation has expired or was already used." {
+		t.Fatalf("unexpected unauthorized text: %q", text)
+	}
+
+	text, err = m.HandleSecurityDecision(context.Background(), "user1", "telegram", decisionErr.Decision.PendingID, true)
+	if err != nil {
+		t.Fatalf("unexpected error approving after unauthorized attempt: %v", err)
+	}
+	if text != "Message approved and sent." {
+		t.Fatalf("unexpected approval text after unauthorized attempt: %q", text)
+	}
+
+	rf, err := executor.ReadResponseFile(filepath.Join(responsesDir, "ai-chat-lab-a3f2.json"))
+	if err != nil {
+		t.Fatalf("reading response file: %v", err)
+	}
+	if len(rf.Messages) != 1 || rf.Messages[0].Role != "user" {
+		t.Fatalf("unexpected messages after authorized approval: %+v", rf.Messages)
+	}
+}

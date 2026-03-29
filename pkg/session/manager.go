@@ -745,10 +745,14 @@ func (m *Manager) takePendingConfirmation(senderID, channel, token string) (pend
 	if !ok {
 		return pendingConfirmation{}, false
 	}
-	delete(m.pending, token)
-	if pending.SenderID != senderID || pending.Channel != channel || time.Now().After(pending.ExpiresAt) {
+	if pending.SenderID != senderID || pending.Channel != channel {
 		return pendingConfirmation{}, false
 	}
+	if time.Now().After(pending.ExpiresAt) {
+		delete(m.pending, token)
+		return pendingConfirmation{}, false
+	}
+	delete(m.pending, token)
 	return pending, true
 }
 
