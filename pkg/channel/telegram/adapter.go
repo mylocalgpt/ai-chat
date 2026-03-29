@@ -45,8 +45,7 @@ type TelegramAdapter struct {
 	sessionToChat      map[int64]string
 	sessionToChatMutex sync.RWMutex
 
-	pendingSearch      map[string]time.Time
-	pendingSearchMutex sync.RWMutex
+	pendingSearch map[string]time.Time
 }
 
 func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAdapter, error) {

@@ -75,10 +75,10 @@ func escapeHTML(text string) string {
 }
 
 func convertMarkdownToHTML(text string) string {
-	linkRegex := regexp.MustCompile("\\[([^\\]]+)\\]\\(([^)]+)\\)")
-	text = linkRegex.ReplaceAllString(text, "<a href=\"$2\">$1</a>")
+	linkRegex := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	text = linkRegex.ReplaceAllString(text, `<a href="$2">$1</a>`)
 
-	boldDoubleAsterisk := regexp.MustCompile("\\*\\*(.+?)\\*\\*")
+	boldDoubleAsterisk := regexp.MustCompile(`\*\*(.+?)\*\*`)
 	for boldDoubleAsterisk.MatchString(text) {
 		text = boldDoubleAsterisk.ReplaceAllString(text, "<b>$1</b>")
 	}
@@ -88,7 +88,7 @@ func convertMarkdownToHTML(text string) string {
 		text = boldDoubleUnderscore.ReplaceAllString(text, "<b>$1</b>")
 	}
 
-	italicSingleAsterisk := regexp.MustCompile("\\*([^*]+)\\*")
+	italicSingleAsterisk := regexp.MustCompile(`\*([^*]+)\*`)
 	for italicSingleAsterisk.MatchString(text) {
 		text = italicSingleAsterisk.ReplaceAllString(text, "<i>$1</i>")
 	}
@@ -98,10 +98,10 @@ func convertMarkdownToHTML(text string) string {
 		text = italicSingleUnderscore.ReplaceAllString(text, "<i>$1</i>")
 	}
 
-	headingRegex := regexp.MustCompile("(?m)^#{1,6}\\s+(.+)$")
+	headingRegex := regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
 	text = headingRegex.ReplaceAllString(text, "<b>$1</b>")
 
-	blockquoteRegex := regexp.MustCompile("(?m)^&gt;\\s*(.+)$")
+	blockquoteRegex := regexp.MustCompile(`(?m)^&gt;\s*(.+)$`)
 	text = blockquoteRegex.ReplaceAllString(text, "<blockquote>$1</blockquote>")
 
 	return text

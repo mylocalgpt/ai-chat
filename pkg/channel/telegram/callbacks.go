@@ -14,8 +14,6 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
 
-const pendingMessageExpiry = 5 * time.Minute
-
 type callbackHandler struct {
 	pendingMessages map[string]pendingEntry
 	pendingMutex    sync.RWMutex

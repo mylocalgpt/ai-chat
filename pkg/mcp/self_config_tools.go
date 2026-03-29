@@ -180,7 +180,7 @@ func checkResponseDirWritable(dir string) CheckResult {
 	if err := os.WriteFile(tmpFile, []byte("test"), 0644); err != nil {
 		return CheckResult{OK: false, Error: err.Error()}
 	}
-	os.Remove(tmpFile)
+	os.Remove(tmpFile) //nolint:errcheck // cleanup, ignore error
 	return CheckResult{OK: true, Detail: dir}
 }
 

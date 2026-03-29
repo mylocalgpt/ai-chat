@@ -79,7 +79,8 @@ func (s *Server) handleSessionList(ctx context.Context, _ *gomcp.CallToolRequest
 	var err error
 
 	if input.Workspace != "" {
-		ws, err := s.store.GetWorkspace(ctx, input.Workspace)
+		var ws *core.Workspace
+		ws, err = s.store.GetWorkspace(ctx, input.Workspace)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return nil, nil, fmt.Errorf("workspace %q not found", input.Workspace)
