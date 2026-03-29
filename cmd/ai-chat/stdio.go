@@ -25,7 +25,6 @@ func runStdio() {
 		os.Exit(1)
 	}
 
-	// Ensure data directory exists.
 	dbDir := filepath.Dir(cfg.DBPath)
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		slog.Error("failed to create data directory", "dir", dbDir, "error", err)
@@ -46,21 +45,19 @@ func runStdio() {
 	st := store.New(db)
 	defer func() { _ = st.Close() }()
 
-	mcpCfg := &mcppkg.ServerConfig{
+	mcpCfg := &mcppkg.MCPConfig{
 		AllowedUsers: cfg.Telegram.AllowedUsers,
+		ResponsesDir: cfg.ResponsesDir,
 	}
 
 	var opts []mcppkg.Option
 
-	// Wire executor for session management.
 	tmx := executor.NewTmux()
 	registry := executor.NewHarnessRegistry(tmx)
 	exec := executor.NewExecutor(st, tmx, registry, cfg.ResponsesDir)
-	opts = append(opts, mcppkg.WithExecutor(exec))
+	sessionMgr := newExecutorSessionManager(exec, st)
+	opts = append(opts, mcppkg.WithSessionManager(sessionMgr))
 
-	// Wire Telegram adapter if bot token is configured.
-	// The adapter is NOT started (no long polling) - only used for API calls
-	// (setMyCommands, sendMessage) and connectivity checks.
 	if cfg.Telegram.BotToken != "" {
 		tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
 			BotToken:     cfg.Telegram.BotToken,

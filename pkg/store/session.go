@@ -271,3 +271,11 @@ func (s *Store) scanSession(row *sql.Row) (*core.Session, error) {
 	}
 	return &sess, nil
 }
+
+func (s *Store) GetSessionByName(ctx context.Context, name string) (*core.Session, error) {
+	return s.GetSessionByTmuxSession(ctx, name)
+}
+
+func (s *Store) GetSessionPreview(ctx context.Context, sessionID int64) (firstUser, lastAgent string, err error) {
+	return "", "", nil
+}

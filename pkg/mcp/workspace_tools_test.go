@@ -11,7 +11,6 @@ import (
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// mockStore implements MCPStore for testing.
 type mockStore struct {
 	workspaces   map[string]*core.Workspace
 	sessions     []core.Session
@@ -100,8 +99,22 @@ func (m *mockStore) ListSessions(_ context.Context) ([]core.Session, error) {
 	return []core.Session{}, nil
 }
 
-func (m *mockStore) UpdateSessionStatus(_ context.Context, _ int64, _ string) error {
-	return nil
+func (m *mockStore) ListSessionsForWorkspace(_ context.Context, workspaceID int64) ([]core.Session, error) {
+	var result []core.Session
+	for _, sess := range m.sessions {
+		if sess.WorkspaceID == workspaceID {
+			result = append(result, sess)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockStore) GetSessionByName(_ context.Context, _ string) (*core.Session, error) {
+	return nil, store.ErrNotFound
+}
+
+func (m *mockStore) GetSessionPreview(_ context.Context, _ int64) (string, string, error) {
+	return "", "", nil
 }
 
 func (m *mockStore) GetModelConfig(_ context.Context, _ string) (*store.ModelConfig, error) {
@@ -109,7 +122,6 @@ func (m *mockStore) GetModelConfig(_ context.Context, _ string) (*store.ModelCon
 }
 
 func (m *mockStore) SetModelConfig(_ context.Context, cfg store.ModelConfig) error {
-	// Upsert by role.
 	for i, existing := range m.modelConfigs {
 		if existing.Role == cfg.Role {
 			m.modelConfigs[i] = cfg
@@ -127,7 +139,6 @@ func (m *mockStore) ListModelConfigs(_ context.Context) ([]store.ModelConfig, er
 	return []store.ModelConfig{}, nil
 }
 
-// mockNotifier tracks calls to OnWorkspacesChanged.
 type mockNotifier struct {
 	called int
 }
@@ -139,7 +150,7 @@ func newTestServer(st MCPStore, notifier WorkspaceChangeNotifier) *Server {
 	if notifier != nil {
 		opts = append(opts, WithNotifier(notifier))
 	}
-	return NewServer(st, &ServerConfig{}, opts...)
+	return NewServer(st, &MCPConfig{}, opts...)
 }
 
 func TestWorkspaceRegister(t *testing.T) {
@@ -147,7 +158,6 @@ func TestWorkspaceRegister(t *testing.T) {
 	notif := &mockNotifier{}
 	srv := newTestServer(ms, notif)
 
-	// Create a temp dir for the workspace path.
 	dir := t.TempDir()
 
 	res, _, err := srv.handleWorkspaceRegister(context.Background(), &gomcp.CallToolRequest{}, WorkspaceRegisterInput{
@@ -300,7 +310,6 @@ func TestWorkspaceList(t *testing.T) {
 		t.Fatal("expected result content")
 	}
 
-	// Parse the JSON text.
 	tc := res.Content[0].(*gomcp.TextContent)
 	var infos []workspaceInfo
 	if err := json.Unmarshal([]byte(tc.Text), &infos); err != nil {
@@ -331,7 +340,6 @@ func TestWorkspaceUpdate(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify metadata was merged.
 	ws := ms.workspaces["test"]
 	var m map[string]any
 	if err := json.Unmarshal(ws.Metadata, &m); err != nil {
@@ -374,7 +382,7 @@ func TestWorkspaceUpdateClearAliases(t *testing.T) {
 
 func TestNotifierNilSafety(t *testing.T) {
 	ms := newMockStore()
-	srv := newTestServer(ms, nil) // no notifier
+	srv := newTestServer(ms, nil)
 
 	dir := t.TempDir()
 	_, _, err := srv.handleWorkspaceRegister(context.Background(), &gomcp.CallToolRequest{}, WorkspaceRegisterInput{

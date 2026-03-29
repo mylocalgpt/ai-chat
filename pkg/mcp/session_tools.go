@@ -11,12 +11,8 @@ import (
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// --- Input/Output structs ---
-
-// SessionListInput is empty; session_list has no parameters.
 type SessionListInput struct{}
 
-// SessionListEntry is the JSON representation returned by session_list.
 type SessionListEntry struct {
 	WorkspaceName string `json:"workspace_name"`
 	Agent         string `json:"agent"`
@@ -25,26 +21,21 @@ type SessionListEntry struct {
 	LastActivity  string `json:"last_activity,omitempty"`
 }
 
-// SessionRestartInput is the input for the session_restart tool.
 type SessionRestartInput struct {
 	WorkspaceName string `json:"workspace_name" jsonschema:"Name of the workspace"`
 	Agent         string `json:"agent,omitempty" jsonschema:"Agent to restart (uses workspace default if omitted)"`
 }
 
-// SessionKillInput is the input for the session_kill tool.
 type SessionKillInput struct {
 	WorkspaceName string `json:"workspace_name" jsonschema:"Name of the workspace"`
 	Agent         string `json:"agent,omitempty" jsonschema:"Agent to kill (uses workspace default if omitted)"`
 }
 
-// AgentSendInput is the input for the agent_send tool.
 type AgentSendInput struct {
 	WorkspaceName string `json:"workspace_name" jsonschema:"Name of the workspace to send the message to"`
 	Agent         string `json:"agent,omitempty" jsonschema:"Agent to send to (uses workspace default, then opencode)"`
 	Message       string `json:"message" jsonschema:"Message to send to the agent"`
 }
-
-// --- Registration ---
 
 func (s *Server) registerSessionTools() {
 	gomcp.AddTool(s.inner, &gomcp.Tool{
@@ -68,15 +59,12 @@ func (s *Server) registerSessionTools() {
 	}, s.handleAgentSend)
 }
 
-// --- Handlers ---
-
 func (s *Server) handleSessionList(ctx context.Context, _ *gomcp.CallToolRequest, _ SessionListInput) (*gomcp.CallToolResult, any, error) {
 	sessions, err := s.store.ListSessions(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing sessions: %w", err)
 	}
 
-	// Build workspace ID-to-name map.
 	workspaces, err := s.store.ListWorkspaces(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing workspaces: %w", err)
@@ -110,8 +98,8 @@ func (s *Server) handleSessionList(ctx context.Context, _ *gomcp.CallToolRequest
 }
 
 func (s *Server) handleSessionRestart(ctx context.Context, _ *gomcp.CallToolRequest, input SessionRestartInput) (*gomcp.CallToolResult, any, error) {
-	if s.executor == nil {
-		return nil, nil, fmt.Errorf("executor not available - session management requires the executor to be wired in")
+	if s.sessionMgr == nil {
+		return nil, nil, fmt.Errorf("session manager not available")
 	}
 
 	ws, err := s.store.GetWorkspace(ctx, input.WorkspaceName)
@@ -127,20 +115,30 @@ func (s *Server) handleSessionRestart(ctx context.Context, _ *gomcp.CallToolRequ
 		return nil, nil, err
 	}
 
-	if err := s.executor.KillSession(ctx, ws.ID, agent); err != nil {
-		return nil, nil, fmt.Errorf("killing session: %w", err)
+	sessions, err := s.store.ListSessionsForWorkspace(ctx, ws.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing sessions: %w", err)
 	}
 
-	if err := s.executor.SpawnSession(ctx, *ws, agent); err != nil {
-		return nil, nil, fmt.Errorf("spawning session: %w", err)
+	for _, sess := range sessions {
+		if sess.Agent == agent {
+			if err := s.sessionMgr.KillSession(ctx, sess.ID); err != nil {
+				return nil, nil, fmt.Errorf("killing session: %w", err)
+			}
+			break
+		}
+	}
+
+	if _, err := s.sessionMgr.CreateSession(ctx, *ws, agent); err != nil {
+		return nil, nil, fmt.Errorf("creating session: %w", err)
 	}
 
 	return textResult(fmt.Sprintf("Restarted session for workspace: %s (agent: %s)", input.WorkspaceName, agent)), nil, nil
 }
 
 func (s *Server) handleSessionKill(ctx context.Context, _ *gomcp.CallToolRequest, input SessionKillInput) (*gomcp.CallToolResult, any, error) {
-	if s.executor == nil {
-		return nil, nil, fmt.Errorf("executor not available - session management requires the executor to be wired in")
+	if s.sessionMgr == nil {
+		return nil, nil, fmt.Errorf("session manager not available")
 	}
 
 	ws, err := s.store.GetWorkspace(ctx, input.WorkspaceName)
@@ -156,16 +154,26 @@ func (s *Server) handleSessionKill(ctx context.Context, _ *gomcp.CallToolRequest
 		return nil, nil, err
 	}
 
-	if err := s.executor.KillSession(ctx, ws.ID, agent); err != nil {
-		return nil, nil, fmt.Errorf("killing session: %w", err)
+	sessions, err := s.store.ListSessionsForWorkspace(ctx, ws.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing sessions: %w", err)
+	}
+
+	for _, sess := range sessions {
+		if sess.Agent == agent {
+			if err := s.sessionMgr.KillSession(ctx, sess.ID); err != nil {
+				return nil, nil, fmt.Errorf("killing session: %w", err)
+			}
+			break
+		}
 	}
 
 	return textResult(fmt.Sprintf("Killed session for workspace: %s", input.WorkspaceName)), nil, nil
 }
 
 func (s *Server) handleAgentSend(ctx context.Context, _ *gomcp.CallToolRequest, input AgentSendInput) (*gomcp.CallToolResult, any, error) {
-	if s.executor == nil {
-		return nil, nil, fmt.Errorf("executor not available - agent_send requires the executor to be wired in")
+	if s.sessionMgr == nil {
+		return nil, nil, fmt.Errorf("session manager not available")
 	}
 
 	ws, err := s.store.GetWorkspace(ctx, input.WorkspaceName)
@@ -181,18 +189,30 @@ func (s *Server) handleAgentSend(ctx context.Context, _ *gomcp.CallToolRequest, 
 		agent = "opencode"
 	}
 
-	response, err := s.executor.Execute(ctx, *ws, agent, input.Message)
+	sessions, err := s.store.ListSessionsForWorkspace(ctx, ws.ID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("executing agent_send: %w", err)
+		return nil, nil, fmt.Errorf("listing sessions: %w", err)
 	}
 
-	return textResult(response), nil, nil
+	var sessionID int64
+	for _, sess := range sessions {
+		if sess.Agent == agent {
+			sessionID = sess.ID
+			break
+		}
+	}
+
+	if sessionID == 0 {
+		return nil, nil, fmt.Errorf("no active session for agent %s in workspace %s", agent, input.WorkspaceName)
+	}
+
+	if err := s.sessionMgr.Send(ctx, sessionID, input.Message); err != nil {
+		return nil, nil, fmt.Errorf("sending message: %w", err)
+	}
+
+	return textResult("Message sent to agent"), nil, nil
 }
 
-// --- Helpers ---
-
-// resolveAgent returns the agent from the input, falling back to the workspace's
-// default_agent metadata field. Returns an error if neither is set.
 func (s *Server) resolveAgent(inputAgent string, metadata json.RawMessage) (string, error) {
 	if inputAgent != "" {
 		return inputAgent, nil

@@ -11,45 +11,65 @@ import (
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// mockExecutor implements the Executor interface for testing.
-type mockExecutor struct {
-	killCalls       []executorCall
-	spawnCalls      []executorCall
-	executeCalls    []executeCall
-	executeResponse string
+type mockSessionManager struct {
+	killCalls   []int64
+	createCalls []createCall
+	sendCalls   []sendCall
 }
 
-type executorCall struct {
-	workspaceID int64
-	agent       string
+type createCall struct {
+	workspace core.Workspace
+	agent     string
 }
 
-func (m *mockExecutor) KillSession(_ context.Context, workspaceID int64, agent string) error {
-	m.killCalls = append(m.killCalls, executorCall{workspaceID, agent})
+type sendCall struct {
+	sessionID int64
+	message   string
+}
+
+func (m *mockSessionManager) ListSessions(_ context.Context) ([]core.Session, error) {
+	return []core.Session{}, nil
+}
+
+func (m *mockSessionManager) ListSessionsForWorkspace(_ context.Context, _ int64) ([]core.Session, error) {
+	return []core.Session{}, nil
+}
+
+func (m *mockSessionManager) GetActiveSession(_ context.Context, _ int64) (*core.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionManager) GetSessionByName(_ context.Context, _ string) (*core.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionManager) SetActiveSession(_ context.Context, _, _ int64) error {
 	return nil
 }
 
-func (m *mockExecutor) SpawnSession(_ context.Context, ws core.Workspace, agent string) error {
-	m.spawnCalls = append(m.spawnCalls, executorCall{ws.ID, agent})
+func (m *mockSessionManager) CreateSession(_ context.Context, ws core.Workspace, agent string) (*core.Session, error) {
+	m.createCalls = append(m.createCalls, createCall{workspace: ws, agent: agent})
+	return &core.Session{ID: 1, WorkspaceID: ws.ID, Agent: agent}, nil
+}
+
+func (m *mockSessionManager) ClearSession(_ context.Context, _ core.Session) (*core.Session, error) {
+	return &core.Session{}, nil
+}
+
+func (m *mockSessionManager) KillSession(_ context.Context, sessionID int64) error {
+	m.killCalls = append(m.killCalls, sessionID)
 	return nil
 }
 
-type executeCall struct {
-	workspaceID int64
-	agent       string
-	message     string
-}
-
-func (m *mockExecutor) Execute(_ context.Context, ws core.Workspace, agent, message string) (string, error) {
-	m.executeCalls = append(m.executeCalls, executeCall{ws.ID, agent, message})
-	return m.executeResponse, nil
+func (m *mockSessionManager) Send(_ context.Context, sessionID int64, message string) error {
+	m.sendCalls = append(m.sendCalls, sendCall{sessionID: sessionID, message: message})
+	return nil
 }
 
 func TestSessionList(t *testing.T) {
 	ms := newMockStore()
 	srv := newTestServer(ms, nil)
 
-	// Add workspaces and sessions.
 	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
 	ms.workspaces["proj2"] = &core.Workspace{ID: 2, Name: "proj2", Path: "/tmp"}
 	ms.sessions = []core.Session{
@@ -94,25 +114,26 @@ func TestSessionListEmpty(t *testing.T) {
 	}
 }
 
-func TestSessionRestartNilExecutor(t *testing.T) {
+func TestSessionRestartNilSessionManager(t *testing.T) {
 	ms := newMockStore()
-	srv := newTestServer(ms, nil) // no executor
+	srv := newTestServer(ms, nil)
 
 	_, _, err := srv.handleSessionRestart(context.Background(), &gomcp.CallToolRequest{}, SessionRestartInput{
 		WorkspaceName: "test",
 		Agent:         "opencode",
 	})
 	if err == nil {
-		t.Error("expected error for nil executor")
+		t.Error("expected error for nil session manager")
 	}
 }
 
 func TestSessionRestart(t *testing.T) {
 	ms := newMockStore()
-	exec := &mockExecutor{}
-	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
 	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode"}}
 
 	res, _, err := srv.handleSessionRestart(context.Background(), &gomcp.CallToolRequest{}, SessionRestartInput{
 		WorkspaceName: "test",
@@ -122,11 +143,11 @@ func TestSessionRestart(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(exec.killCalls) != 1 || exec.killCalls[0].workspaceID != 1 || exec.killCalls[0].agent != "opencode" {
-		t.Errorf("expected KillSession(1, opencode), got %v", exec.killCalls)
+	if len(sm.killCalls) != 1 || sm.killCalls[0] != 10 {
+		t.Errorf("expected KillSession(10), got %v", sm.killCalls)
 	}
-	if len(exec.spawnCalls) != 1 || exec.spawnCalls[0].workspaceID != 1 || exec.spawnCalls[0].agent != "opencode" {
-		t.Errorf("expected SpawnSession(1, opencode), got %v", exec.spawnCalls)
+	if len(sm.createCalls) != 1 || sm.createCalls[0].agent != "opencode" {
+		t.Errorf("expected CreateSession with opencode, got %v", sm.createCalls)
 	}
 	if res == nil {
 		t.Error("expected result")
@@ -135,8 +156,8 @@ func TestSessionRestart(t *testing.T) {
 
 func TestSessionRestartMissingWorkspace(t *testing.T) {
 	ms := newMockStore()
-	exec := &mockExecutor{}
-	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
 	_, _, err := srv.handleSessionRestart(context.Background(), &gomcp.CallToolRequest{}, SessionRestartInput{
 		WorkspaceName: "nope",
@@ -149,10 +170,9 @@ func TestSessionRestartMissingWorkspace(t *testing.T) {
 
 func TestSessionRestartNoAgent(t *testing.T) {
 	ms := newMockStore()
-	exec := &mockExecutor{}
-	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
-	// No default_agent in metadata.
 	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
 
 	_, _, err := srv.handleSessionRestart(context.Background(), &gomcp.CallToolRequest{}, SessionRestartInput{
@@ -165,11 +185,12 @@ func TestSessionRestartNoAgent(t *testing.T) {
 
 func TestSessionRestartDefaultAgent(t *testing.T) {
 	ms := newMockStore()
-	exec := &mockExecutor{}
-	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
 	meta, _ := json.Marshal(map[string]any{"default_agent": "opencode"})
 	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp", Metadata: meta}
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode"}}
 
 	_, _, err := srv.handleSessionRestart(context.Background(), &gomcp.CallToolRequest{}, SessionRestartInput{
 		WorkspaceName: "test",
@@ -177,17 +198,18 @@ func TestSessionRestartDefaultAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(exec.spawnCalls) != 1 || exec.spawnCalls[0].agent != "opencode" {
-		t.Errorf("expected SpawnSession with opencode, got %v", exec.spawnCalls)
+	if len(sm.createCalls) != 1 || sm.createCalls[0].agent != "opencode" {
+		t.Errorf("expected CreateSession with opencode, got %v", sm.createCalls)
 	}
 }
 
 func TestSessionKill(t *testing.T) {
 	ms := newMockStore()
-	exec := &mockExecutor{}
-	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
 	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode"}}
 
 	res, _, err := srv.handleSessionKill(context.Background(), &gomcp.CallToolRequest{}, SessionKillInput{
 		WorkspaceName: "test",
@@ -196,8 +218,8 @@ func TestSessionKill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(exec.killCalls) != 1 {
-		t.Errorf("expected 1 kill call, got %d", len(exec.killCalls))
+	if len(sm.killCalls) != 1 {
+		t.Errorf("expected 1 kill call, got %d", len(sm.killCalls))
 	}
 	if res == nil {
 		t.Error("expected result")
@@ -206,10 +228,11 @@ func TestSessionKill(t *testing.T) {
 
 func TestAgentSend(t *testing.T) {
 	ms := newMockStore()
-	exec := &mockExecutor{executeResponse: "agent response here"}
-	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
 	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode"}}
 
 	res, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{
 		WorkspaceName: "proj1",
@@ -220,27 +243,27 @@ func TestAgentSend(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(exec.executeCalls) != 1 {
-		t.Fatalf("expected 1 execute call, got %d", len(exec.executeCalls))
+	if len(sm.sendCalls) != 1 {
+		t.Fatalf("expected 1 send call, got %d", len(sm.sendCalls))
 	}
-	call := exec.executeCalls[0]
-	if call.workspaceID != 1 || call.agent != "opencode" || call.message != "hello agent" {
-		t.Errorf("unexpected execute call: %+v", call)
+	call := sm.sendCalls[0]
+	if call.sessionID != 10 || call.message != "hello agent" {
+		t.Errorf("unexpected send call: %+v", call)
 	}
 
 	tc := res.Content[0].(*gomcp.TextContent)
-	if tc.Text != "agent response here" {
-		t.Errorf("expected response %q, got %q", "agent response here", tc.Text)
+	if tc.Text != "Message sent to agent" {
+		t.Errorf("expected response %q, got %q", "Message sent to agent", tc.Text)
 	}
 }
 
 func TestAgentSendFallbackAgent(t *testing.T) {
 	ms := newMockStore()
-	exec := &mockExecutor{executeResponse: "ok"}
-	srv := NewServer(ms, &ServerConfig{}, WithExecutor(exec))
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
-	// No default_agent in metadata, no agent in input - should fall back to "opencode".
 	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode"}}
 
 	_, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{
 		WorkspaceName: "proj1",
@@ -250,12 +273,12 @@ func TestAgentSendFallbackAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(exec.executeCalls) != 1 || exec.executeCalls[0].agent != "opencode" {
-		t.Errorf("expected fallback to opencode, got %+v", exec.executeCalls)
+	if len(sm.sendCalls) != 1 || sm.sendCalls[0].sessionID != 10 {
+		t.Errorf("expected send to session 10, got %+v", sm.sendCalls)
 	}
 }
 
-func TestAgentSendNilExecutor(t *testing.T) {
+func TestAgentSendNilSessionManager(t *testing.T) {
 	ms := newMockStore()
 	srv := newTestServer(ms, nil)
 
@@ -264,11 +287,11 @@ func TestAgentSendNilExecutor(t *testing.T) {
 		Message:       "hello",
 	})
 	if err == nil {
-		t.Error("expected error for nil executor")
+		t.Error("expected error for nil session manager")
 	}
 }
 
-func TestSessionKillNilExecutor(t *testing.T) {
+func TestSessionKillNilSessionManager(t *testing.T) {
 	ms := newMockStore()
 	srv := newTestServer(ms, nil)
 
@@ -277,6 +300,6 @@ func TestSessionKillNilExecutor(t *testing.T) {
 		Agent:         "opencode",
 	})
 	if err == nil {
-		t.Error("expected error for nil executor")
+		t.Error("expected error for nil session manager")
 	}
 }

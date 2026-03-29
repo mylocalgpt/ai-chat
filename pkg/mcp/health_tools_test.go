@@ -34,7 +34,7 @@ func (c *mockChannel) IsConnected() bool {
 func TestHealthCheckHealthy(t *testing.T) {
 	ms := newMockStore()
 	ch := &mockChannel{connected: true}
-	srv := NewServer(ms, &ServerConfig{AllowedUsers: []int64{123}}, WithChannelAdapter(ch))
+	srv := NewServer(ms, &MCPConfig{AllowedUsers: []int64{123}}, WithChannelAdapter(ch))
 
 	ms.workspaces["ws1"] = &core.Workspace{ID: 1, Name: "ws1", Path: "/tmp"}
 	ms.sessions = []core.Session{
@@ -108,7 +108,7 @@ func TestHealthCheckNoChannel(t *testing.T) {
 func TestHealthCheckChannelDisconnected(t *testing.T) {
 	ms := newMockStore()
 	ch := &mockChannel{connected: false}
-	srv := NewServer(ms, &ServerConfig{}, WithChannelAdapter(ch))
+	srv := NewServer(ms, &MCPConfig{}, WithChannelAdapter(ch))
 
 	res, _, err := srv.handleHealthCheck(context.Background(), &gomcp.CallToolRequest{}, HealthCheckInput{})
 	if err != nil {
@@ -127,7 +127,7 @@ func TestHealthCheckChannelDisconnected(t *testing.T) {
 func TestHealthCheckNoSecrets(t *testing.T) {
 	ms := newMockStore()
 	ch := &mockChannel{connected: true}
-	srv := NewServer(ms, &ServerConfig{AllowedUsers: []int64{123}}, WithChannelAdapter(ch))
+	srv := NewServer(ms, &MCPConfig{AllowedUsers: []int64{123}}, WithChannelAdapter(ch))
 
 	res, _, err := srv.handleHealthCheck(context.Background(), &gomcp.CallToolRequest{}, HealthCheckInput{})
 	if err != nil {
@@ -146,7 +146,7 @@ func TestHealthCheckNoSecrets(t *testing.T) {
 func TestSendTestMessageSuccess(t *testing.T) {
 	ms := newMockStore()
 	ch := &mockChannel{connected: true}
-	srv := NewServer(ms, &ServerConfig{AllowedUsers: []int64{42}}, WithChannelAdapter(ch))
+	srv := NewServer(ms, &MCPConfig{AllowedUsers: []int64{42}}, WithChannelAdapter(ch))
 
 	res, _, err := srv.handleSendTestMessage(context.Background(), &gomcp.CallToolRequest{}, SendTestMessageInput{
 		Platform: "telegram",
@@ -185,7 +185,7 @@ func TestSendTestMessageNilChannel(t *testing.T) {
 func TestSendTestMessageNoAllowedUsers(t *testing.T) {
 	ms := newMockStore()
 	ch := &mockChannel{connected: true}
-	srv := NewServer(ms, &ServerConfig{AllowedUsers: []int64{}}, WithChannelAdapter(ch))
+	srv := NewServer(ms, &MCPConfig{AllowedUsers: []int64{}}, WithChannelAdapter(ch))
 
 	_, _, err := srv.handleSendTestMessage(context.Background(), &gomcp.CallToolRequest{}, SendTestMessageInput{
 		Platform: "telegram",
@@ -199,7 +199,7 @@ func TestSendTestMessageNoAllowedUsers(t *testing.T) {
 func TestSendTestMessageUnknownPlatform(t *testing.T) {
 	ms := newMockStore()
 	ch := &mockChannel{connected: true}
-	srv := NewServer(ms, &ServerConfig{AllowedUsers: []int64{1}}, WithChannelAdapter(ch))
+	srv := NewServer(ms, &MCPConfig{AllowedUsers: []int64{1}}, WithChannelAdapter(ch))
 
 	_, _, err := srv.handleSendTestMessage(context.Background(), &gomcp.CallToolRequest{}, SendTestMessageInput{
 		Platform: "slack",

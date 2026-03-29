@@ -43,6 +43,8 @@ func (s *Server) registerModelTools() {
 	}, s.handleConfigGetModels)
 }
 
+var _ = (*Server)(nil).registerModelTools
+
 // --- Handlers ---
 
 func (s *Server) handleConfigSetModel(ctx context.Context, _ *gomcp.CallToolRequest, input ConfigSetModelInput) (*gomcp.CallToolResult, any, error) {
