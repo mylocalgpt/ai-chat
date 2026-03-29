@@ -285,8 +285,8 @@ func (s *Store) scanSession(row *sql.Row) (*core.Session, error) {
 }
 
 func (s *Store) GetSessionByName(ctx context.Context, name string) (*core.Session, error) {
-	workspace, slug := parseSessionName(name)
-	if workspace == "" || slug == "" {
+	workspace, slug, isFullName := ParseSessionReference(name)
+	if !isFullName {
 		return nil, fmt.Errorf("invalid session name format: %q", name)
 	}
 
@@ -296,6 +296,53 @@ func (s *Store) GetSessionByName(ctx context.Context, name string) (*core.Sessio
 	}
 
 	return s.GetSessionBySlug(ctx, ws.ID, slug)
+}
+
+func (s *Store) GetSessionByReference(ctx context.Context, reference string) (*core.Session, error) {
+	_, slug, isFullName := ParseSessionReference(reference)
+	if isFullName {
+		return s.GetSessionByName(ctx, reference)
+	}
+
+	sessions, err := s.ListSessions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+
+	var matches []core.Session
+	for _, sess := range sessions {
+		if sess.Slug == slug {
+			matches = append(matches, sess)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("session reference %q: %w", reference, ErrNotFound)
+	case 1:
+		return &matches[0], nil
+	default:
+		return nil, fmt.Errorf("session reference %q is ambiguous", reference)
+	}
+}
+
+func (s *Store) GetSessionByReferenceInWorkspace(ctx context.Context, workspaceID int64, reference string) (*core.Session, error) {
+	workspace, slug, isFullName := ParseSessionReference(reference)
+	if isFullName {
+		ws, err := s.GetWorkspace(ctx, workspace)
+		if err != nil {
+			return nil, fmt.Errorf("looking up workspace %q: %w", workspace, err)
+		}
+		if ws.ID != workspaceID {
+			return nil, fmt.Errorf("session reference %q: %w", reference, ErrNotFound)
+		}
+	}
+	return s.GetSessionBySlug(ctx, workspaceID, slug)
+}
+
+func ParseSessionReference(name string) (workspace, slug string, isFullName bool) {
+	workspace, slug = parseSessionName(name)
+	return workspace, slug, workspace != "" && slug != ""
 }
 
 func parseSessionName(name string) (workspace, slug string) {

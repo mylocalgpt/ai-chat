@@ -12,6 +12,7 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
 	mcppkg "github.com/mylocalgpt/ai-chat/pkg/mcp"
+	"github.com/mylocalgpt/ai-chat/pkg/session"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
@@ -54,8 +55,9 @@ func runStdio() {
 
 	tmx := executor.NewTmux()
 	registry := executor.NewHarnessRegistry(tmx)
-	exec := executor.NewExecutor(st, tmx, registry, cfg.ResponsesDir)
-	sessionMgr := newExecutorSessionManager(exec, st)
+	proxy := executor.NewSecurityProxy()
+	manager := session.NewManager(st, registry, proxy, session.ManagerConfig{ResponsesDir: cfg.ResponsesDir})
+	sessionMgr := newExecutorSessionManager(manager, st)
 	opts = append(opts, mcppkg.WithSessionManager(sessionMgr))
 
 	if cfg.Telegram.BotToken != "" {

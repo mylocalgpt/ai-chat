@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
@@ -13,8 +12,6 @@ import (
 
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-const sessionNamePrefix = "ai-chat-"
 
 type SessionListInput struct {
 	Workspace string `json:"workspace,omitempty" jsonschema:"Filter by workspace name"`
@@ -35,7 +32,8 @@ type SessionCreateInput struct {
 }
 
 type SessionClearInput struct {
-	Workspace string `json:"workspace,omitempty" jsonschema:"Workspace to clear"`
+	Workspace   string `json:"workspace" jsonschema:"Workspace name"`
+	SessionName string `json:"session_name" jsonschema:"Session name or slug to clear"`
 }
 
 type SessionKillInput struct {
@@ -45,6 +43,11 @@ type SessionKillInput struct {
 type AgentSendInput struct {
 	SessionName string `json:"session_name" jsonschema:"Session name or slug to send message to"`
 	Message     string `json:"message" jsonschema:"Message to send to the agent"`
+}
+
+type SessionSwitchInput struct {
+	Workspace string `json:"workspace" jsonschema:"Workspace name"`
+	Session   string `json:"session" jsonschema:"Session name or slug to switch to"`
 }
 
 func (s *Server) registerSessionTools() {
@@ -72,6 +75,11 @@ func (s *Server) registerSessionTools() {
 		Name:        "agent_send",
 		Description: "Send a message to an agent session",
 	}, s.handleAgentSend)
+
+	gomcp.AddTool(s.inner, &gomcp.Tool{
+		Name:        "session_switch",
+		Description: "Switch the active MCP session for a workspace",
+	}, s.handleSessionSwitch)
 }
 
 func (s *Server) handleSessionList(ctx context.Context, _ *gomcp.CallToolRequest, input SessionListInput) (*gomcp.CallToolResult, any, error) {
@@ -110,7 +118,7 @@ func (s *Server) handleSessionList(ctx context.Context, _ *gomcp.CallToolRequest
 		wsName := wsNames[sess.WorkspaceID]
 
 		entry := SessionListEntry{
-			Name:      sessionNamePrefix + wsName + "-" + sess.Slug,
+			Name:      sess.TmuxSession,
 			Slug:      sess.Slug,
 			Workspace: wsName,
 			Agent:     sess.Agent,
@@ -146,7 +154,7 @@ func (s *Server) handleSessionCreate(ctx context.Context, _ *gomcp.CallToolReque
 		return nil, nil, fmt.Errorf("creating session: %w", err)
 	}
 
-	name := sessionNamePrefix + ws.Name + "-" + sess.Slug
+	name := sess.TmuxSession
 	return textResult(fmt.Sprintf("Created session: %s (slug: %s)", name, sess.Slug)), nil, nil
 }
 
@@ -155,8 +163,8 @@ func (s *Server) handleSessionClear(ctx context.Context, _ *gomcp.CallToolReques
 		return nil, nil, fmt.Errorf("session manager not available")
 	}
 
-	if input.Workspace == "" {
-		return nil, nil, fmt.Errorf("workspace is required")
+	if input.Workspace == "" || input.SessionName == "" {
+		return nil, nil, fmt.Errorf("workspace and session_name are required")
 	}
 
 	ws, err := s.store.GetWorkspace(ctx, input.Workspace)
@@ -167,20 +175,20 @@ func (s *Server) handleSessionClear(ctx context.Context, _ *gomcp.CallToolReques
 		return nil, nil, fmt.Errorf("looking up workspace: %w", err)
 	}
 
-	sess, err := s.store.GetActiveSession(ctx, ws.ID)
+	sess, err := s.store.GetSessionByReferenceInWorkspace(ctx, ws.ID, input.SessionName)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, nil, fmt.Errorf("no active session for workspace %q", input.Workspace)
+			return nil, nil, fmt.Errorf("session %q not found in workspace %q", input.SessionName, input.Workspace)
 		}
-		return nil, nil, fmt.Errorf("looking up active session: %w", err)
+		return nil, nil, fmt.Errorf("looking up session: %w", err)
 	}
 
-	newSess, err := s.sessionMgr.ClearSession(ctx, *sess)
+	newSess, err := s.sessionMgr.ClearSession(ctx, sess.ID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("clearing session: %w", err)
 	}
 
-	name := sessionNamePrefix + ws.Name + "-" + newSess.Slug
+	name := newSess.TmuxSession
 	return textResult(fmt.Sprintf("Cleared session. New session: %s", name)), nil, nil
 }
 
@@ -189,35 +197,7 @@ func (s *Server) handleSessionKill(ctx context.Context, _ *gomcp.CallToolRequest
 		return nil, nil, fmt.Errorf("session manager not available")
 	}
 
-	_, slug, isFullName := parseSessionName(input.SessionName)
-
-	var sess *core.Session
-	var err error
-
-	if isFullName {
-		sess, err = s.store.GetSessionByName(ctx, input.SessionName)
-	} else {
-		sessions, err := s.store.ListSessions(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("listing sessions: %w", err)
-		}
-
-		var matches []core.Session
-		for _, s := range sessions {
-			if s.Slug == slug {
-				matches = append(matches, s)
-			}
-		}
-
-		if len(matches) == 0 {
-			return nil, nil, fmt.Errorf("session with slug %q not found", slug)
-		}
-		if len(matches) > 1 {
-			return nil, nil, fmt.Errorf("ambiguous slug %q exists in multiple workspaces", slug)
-		}
-		sess = &matches[0]
-	}
-
+	sess, err := s.store.GetSessionByReference(ctx, input.SessionName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("looking up session: %w", err)
 	}
@@ -234,35 +214,7 @@ func (s *Server) handleAgentSend(ctx context.Context, _ *gomcp.CallToolRequest, 
 		return nil, nil, fmt.Errorf("session manager not available")
 	}
 
-	_, slug, isFullName := parseSessionName(input.SessionName)
-
-	var sess *core.Session
-	var err error
-
-	if isFullName {
-		sess, err = s.store.GetSessionByName(ctx, input.SessionName)
-	} else {
-		sessions, err := s.store.ListSessions(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("listing sessions: %w", err)
-		}
-
-		var matches []core.Session
-		for _, s := range sessions {
-			if s.Slug == slug {
-				matches = append(matches, s)
-			}
-		}
-
-		if len(matches) == 0 {
-			return nil, nil, fmt.Errorf("session with slug %q not found", slug)
-		}
-		if len(matches) > 1 {
-			return nil, nil, fmt.Errorf("ambiguous slug %q exists in multiple workspaces", slug)
-		}
-		sess = &matches[0]
-	}
-
+	sess, err := s.store.GetSessionByReference(ctx, input.SessionName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("looking up session: %w", err)
 	}
@@ -272,6 +224,38 @@ func (s *Server) handleAgentSend(ctx context.Context, _ *gomcp.CallToolRequest, 
 	}
 
 	return textResult("Message sent to agent"), nil, nil
+}
+
+func (s *Server) handleSessionSwitch(ctx context.Context, _ *gomcp.CallToolRequest, input SessionSwitchInput) (*gomcp.CallToolResult, any, error) {
+	if s.sessionMgr == nil {
+		return nil, nil, fmt.Errorf("session manager not available")
+	}
+	if input.Workspace == "" || input.Session == "" {
+		return nil, nil, fmt.Errorf("workspace and session are required")
+	}
+	ws, err := s.store.GetWorkspace(ctx, input.Workspace)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil, fmt.Errorf("workspace %q not found", input.Workspace)
+		}
+		return nil, nil, fmt.Errorf("looking up workspace: %w", err)
+	}
+	sess, err := s.store.GetSessionByReferenceInWorkspace(ctx, ws.ID, input.Session)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil, fmt.Errorf("session %q not found in workspace %q", input.Session, input.Workspace)
+		}
+		return nil, nil, fmt.Errorf("looking up session: %w", err)
+	}
+	sess, err = s.sessionMgr.SwitchSession(ctx, ws.ID, sess.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("switching session: %w", err)
+	}
+	data, err := json.Marshal(map[string]any{"workspace": ws.Name, "session": sess.TmuxSession, "session_id": sess.ID})
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshaling switch result: %w", err)
+	}
+	return textResult(string(data)), nil, nil
 }
 
 func humanAge(t time.Time) string {
@@ -292,12 +276,9 @@ func humanAge(t time.Time) string {
 }
 
 func parseSessionName(input string) (workspace, slug string, isFullName bool) {
-	if strings.HasPrefix(input, sessionNamePrefix) {
-		parts := strings.TrimPrefix(input, sessionNamePrefix)
-		idx := strings.LastIndex(parts, "-")
-		if idx > 0 {
-			return parts[:idx], parts[idx+1:], true
-		}
+	workspace, slug, isFullName = store.ParseSessionReference(input)
+	if isFullName {
+		return workspace, slug, true
 	}
 	return "", input, false
 }

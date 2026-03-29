@@ -47,6 +47,15 @@ func (m *mockStore) GetWorkspace(_ context.Context, name string) (*core.Workspac
 	return ws, nil
 }
 
+func (m *mockStore) GetWorkspaceByID(_ context.Context, id int64) (*core.Workspace, error) {
+	for _, ws := range m.workspaces {
+		if ws.ID == id {
+			return ws, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
 func (m *mockStore) ListWorkspaces(_ context.Context) ([]core.Workspace, error) {
 	var out []core.Workspace
 	for _, ws := range m.workspaces {
@@ -116,6 +125,38 @@ func (m *mockStore) ListSessionsForWorkspace(_ context.Context, workspaceID int6
 func (m *mockStore) GetSessionByName(_ context.Context, name string) (*core.Session, error) {
 	for _, sess := range m.sessions {
 		if sess.TmuxSession == name {
+			return &sess, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *mockStore) GetSessionByReference(ctx context.Context, reference string) (*core.Session, error) {
+	if wsName, slug, isFull := store.ParseSessionReference(reference); isFull {
+		ws, err := m.GetWorkspace(ctx, wsName)
+		if err != nil {
+			return nil, err
+		}
+		return m.GetSessionByReferenceInWorkspace(ctx, ws.ID, slug)
+	}
+	var matches []core.Session
+	for _, sess := range m.sessions {
+		if sess.Slug == reference {
+			matches = append(matches, sess)
+		}
+	}
+	if len(matches) == 0 {
+		return nil, store.ErrNotFound
+	}
+	if len(matches) > 1 {
+		return nil, context.DeadlineExceeded
+	}
+	return &matches[0], nil
+}
+
+func (m *mockStore) GetSessionByReferenceInWorkspace(_ context.Context, workspaceID int64, reference string) (*core.Session, error) {
+	for _, sess := range m.sessions {
+		if sess.WorkspaceID == workspaceID && (sess.Slug == reference || sess.TmuxSession == reference) {
 			return &sess, nil
 		}
 	}

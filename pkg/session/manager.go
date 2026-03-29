@@ -130,6 +130,27 @@ func (m *Manager) Send(ctx context.Context, senderID, channel, message string) e
 	}
 }
 
+func (m *Manager) SendToSession(ctx context.Context, senderID, channel string, sessionID int64, message string) error {
+	ws, sess, info, err := m.loadSessionTarget(ctx, sessionID, true)
+	if err != nil {
+		return err
+	}
+	decision := m.evaluateSecurity(message)
+	switch decision.Action {
+	case core.SecurityActionBlock:
+		return &core.SecurityDecisionError{Decision: decision}
+	case core.SecurityActionConfirm:
+		token, err := m.storePendingConfirmation(senderID, channel, ws.ID, sess.ID, message)
+		if err != nil {
+			return err
+		}
+		decision.PendingID = token
+		return &core.SecurityDecisionError{Decision: decision}
+	default:
+		return m.dispatchMessage(ctx, sess, info, message)
+	}
+}
+
 func (m *Manager) HandleSecurityDecision(ctx context.Context, senderID, channel, token string, approved bool) (string, error) {
 	pending, ok := m.takePendingConfirmation(senderID, channel, token)
 	if !ok {
@@ -152,6 +173,50 @@ func (m *Manager) HandleSecurityDecision(ctx context.Context, senderID, channel,
 		return "", err
 	}
 	return "Message approved and sent.", nil
+}
+
+func (m *Manager) ClearSessionByID(ctx context.Context, senderID, channel string, sessionID int64) (*core.SessionInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ws, sess, _, err := m.loadSessionTarget(ctx, sessionID, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.expireSessionLocked(ctx, ws, sess); err != nil {
+		return nil, err
+	}
+	newSess, info, err := m.createSessionLocked(ctx, ws.ID, ws, sess.Agent)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.store.SetActiveWorkspace(ctx, senderID, channel, ws.ID); err != nil {
+		return nil, fmt.Errorf("setting active workspace: %w", err)
+	}
+	if err := m.store.SetActiveSessionForWorkspace(ctx, senderID, channel, ws.ID, newSess.ID); err != nil {
+		return nil, fmt.Errorf("setting active session: %w", err)
+	}
+	return info, nil
+}
+
+func (m *Manager) KillSessionByID(ctx context.Context, senderID, channel string, sessionID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ws, sess, _, err := m.loadSessionTarget(ctx, sessionID, false)
+	if err != nil {
+		return err
+	}
+	if err := m.expireSessionLocked(ctx, ws, sess); err != nil {
+		return err
+	}
+	activeSession, err := m.store.GetActiveSessionForWorkspace(ctx, senderID, channel, ws.ID)
+	if err == nil && activeSession != nil && activeSession.SessionID == sessionID {
+		if err := m.store.ClearActiveSessionForWorkspace(ctx, senderID, channel, ws.ID); err != nil {
+			return fmt.Errorf("clearing active session: %w", err)
+		}
+	}
+	return nil
 }
 
 func (m *Manager) GetOrCreateActiveSession(ctx context.Context, senderID, channel, agent string) (*core.Session, *core.SessionInfo, error) {
@@ -704,4 +769,26 @@ func newPendingToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func (m *Manager) loadSessionTarget(ctx context.Context, sessionID int64, requireAlive bool) (*core.Workspace, *core.Session, *core.SessionInfo, error) {
+	sess, err := m.store.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("getting session: %w", err)
+	}
+	ws, err := m.store.GetWorkspaceByID(ctx, sess.WorkspaceID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("getting workspace: %w", err)
+	}
+	info := m.buildSessionInfo(ws, sess)
+	if requireAlive {
+		adapter, err := m.adapters.GetAdapter(sess.Agent)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("getting adapter for agent %q: %w", sess.Agent, err)
+		}
+		if !adapter.IsAlive(*info) {
+			return nil, nil, nil, store.ErrNotFound
+		}
+	}
+	return ws, sess, info, nil
 }

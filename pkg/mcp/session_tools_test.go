@@ -16,7 +16,7 @@ type mockSessionManager struct {
 	createCalls []createCall
 	clearCalls  []int64
 	sendCalls   []sendCall
-	activeSess  *core.Session
+	switchCalls []struct{ workspaceID, sessionID int64 }
 }
 
 type createCall struct {
@@ -29,30 +29,14 @@ type sendCall struct {
 	message   string
 }
 
-func (m *mockSessionManager) ListSessions(_ context.Context) ([]core.Session, error) {
-	return []core.Session{}, nil
-}
-
-func (m *mockSessionManager) ListSessionsForWorkspace(_ context.Context, _ int64) ([]core.Session, error) {
-	return []core.Session{}, nil
-}
-
-func (m *mockSessionManager) GetActiveSession(_ context.Context, _ int64) (*core.Session, error) {
-	return m.activeSess, nil
-}
-
-func (m *mockSessionManager) GetSessionByName(_ context.Context, _ string) (*core.Session, error) {
-	return m.activeSess, nil
-}
-
 func (m *mockSessionManager) CreateSession(_ context.Context, ws core.Workspace, agent string) (*core.Session, error) {
 	m.createCalls = append(m.createCalls, createCall{workspace: ws, agent: agent})
-	return &core.Session{ID: 1, WorkspaceID: ws.ID, Agent: agent, Slug: "abc1"}, nil
+	return &core.Session{ID: 1, WorkspaceID: ws.ID, Agent: agent, Slug: "abc1", TmuxSession: "ai-chat-" + ws.Name + "-abc1"}, nil
 }
 
-func (m *mockSessionManager) ClearSession(_ context.Context, sess core.Session) (*core.Session, error) {
-	m.clearCalls = append(m.clearCalls, sess.ID)
-	return &core.Session{ID: 2, WorkspaceID: sess.WorkspaceID, Agent: sess.Agent, Slug: "def2"}, nil
+func (m *mockSessionManager) ClearSession(_ context.Context, sessionID int64) (*core.Session, error) {
+	m.clearCalls = append(m.clearCalls, sessionID)
+	return &core.Session{ID: 2, WorkspaceID: 1, Agent: "opencode", Slug: "def2", TmuxSession: "ai-chat-test-def2"}, nil
 }
 
 func (m *mockSessionManager) KillSession(_ context.Context, sessionID int64) error {
@@ -63,6 +47,11 @@ func (m *mockSessionManager) KillSession(_ context.Context, sessionID int64) err
 func (m *mockSessionManager) Send(_ context.Context, sessionID int64, message string) error {
 	m.sendCalls = append(m.sendCalls, sendCall{sessionID: sessionID, message: message})
 	return nil
+}
+
+func (m *mockSessionManager) SwitchSession(_ context.Context, workspaceID, sessionID int64) (*core.Session, error) {
+	m.switchCalls = append(m.switchCalls, struct{ workspaceID, sessionID int64 }{workspaceID: workspaceID, sessionID: sessionID})
+	return &core.Session{ID: sessionID, WorkspaceID: workspaceID, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-proj1-abc1"}, nil
 }
 
 func TestSessionList(t *testing.T) {
@@ -179,10 +168,11 @@ func TestSessionClear(t *testing.T) {
 	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
 	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
-	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", Status: "active"}}
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-test-abc1", Status: "active"}}
 
 	_, _, err := srv.handleSessionClear(context.Background(), &gomcp.CallToolRequest{}, SessionClearInput{
-		Workspace: "test",
+		Workspace:   "test",
+		SessionName: "abc1",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -199,8 +189,7 @@ func TestSessionKill(t *testing.T) {
 	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
 	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
-	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1"}}
-	sm.activeSess = &ms.sessions[0]
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-test-abc1"}}
 
 	_, _, err := srv.handleSessionKill(context.Background(), &gomcp.CallToolRequest{}, SessionKillInput{
 		SessionName: "abc1",
@@ -223,8 +212,7 @@ func TestAgentSend(t *testing.T) {
 	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
 	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
-	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1"}}
-	sm.activeSess = &ms.sessions[0]
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-proj1-abc1"}}
 
 	res, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{
 		SessionName: "abc1",
@@ -244,6 +232,31 @@ func TestAgentSend(t *testing.T) {
 	tc := res.Content[0].(*gomcp.TextContent)
 	if tc.Text != "Message sent to agent" {
 		t.Errorf("expected 'Message sent to agent', got %q", tc.Text)
+	}
+}
+
+func TestSessionSwitch(t *testing.T) {
+	ms := newMockStore()
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
+
+	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-proj1-abc1"}}
+
+	res, _, err := srv.handleSessionSwitch(context.Background(), &gomcp.CallToolRequest{}, SessionSwitchInput{Workspace: "proj1", Session: "abc1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sm.switchCalls) != 1 || sm.switchCalls[0].workspaceID != 1 || sm.switchCalls[0].sessionID != 10 {
+		t.Fatalf("unexpected switch calls: %+v", sm.switchCalls)
+	}
+	tc := res.Content[0].(*gomcp.TextContent)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &payload); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if payload["workspace"] != "proj1" {
+		t.Fatalf("unexpected payload: %v", payload)
 	}
 }
 
