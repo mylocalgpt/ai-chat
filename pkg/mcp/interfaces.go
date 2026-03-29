@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
-	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
 type SessionManager interface {
@@ -34,10 +33,6 @@ type MCPStore interface {
 	ListSessions(ctx context.Context) ([]core.Session, error)
 	ListSessionsForWorkspace(ctx context.Context, workspaceID int64) ([]core.Session, error)
 	GetSessionByName(ctx context.Context, name string) (*core.Session, error)
-
-	GetModelConfig(ctx context.Context, role string) (*store.ModelConfig, error)
-	SetModelConfig(ctx context.Context, cfg store.ModelConfig) error
-	ListModelConfigs(ctx context.Context) ([]store.ModelConfig, error)
 }
 
 type WorkspaceChangeNotifier interface {

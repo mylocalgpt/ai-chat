@@ -12,11 +12,10 @@ import (
 )
 
 type mockStore struct {
-	workspaces   map[string]*core.Workspace
-	sessions     []core.Session
-	modelConfigs []store.ModelConfig
-	nextID       int64
-	pingErr      error
+	workspaces map[string]*core.Workspace
+	sessions   []core.Session
+	nextID     int64
+	pingErr    error
 }
 
 func newMockStore() *mockStore {
@@ -121,28 +120,6 @@ func (m *mockStore) GetSessionByName(_ context.Context, name string) (*core.Sess
 		}
 	}
 	return nil, store.ErrNotFound
-}
-
-func (m *mockStore) GetModelConfig(_ context.Context, _ string) (*store.ModelConfig, error) {
-	return nil, store.ErrNotFound
-}
-
-func (m *mockStore) SetModelConfig(_ context.Context, cfg store.ModelConfig) error {
-	for i, existing := range m.modelConfigs {
-		if existing.Role == cfg.Role {
-			m.modelConfigs[i] = cfg
-			return nil
-		}
-	}
-	m.modelConfigs = append(m.modelConfigs, cfg)
-	return nil
-}
-
-func (m *mockStore) ListModelConfigs(_ context.Context) ([]store.ModelConfig, error) {
-	if m.modelConfigs != nil {
-		return m.modelConfigs, nil
-	}
-	return []store.ModelConfig{}, nil
 }
 
 type mockNotifier struct {

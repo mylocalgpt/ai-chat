@@ -24,7 +24,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 		t.Fatalf("Migrate failed: %v", err)
 	}
 
-	tables := []string{"workspaces", "messages", "sessions", "user_context", "model_config", "_meta"}
+	tables := []string{"workspaces", "messages", "sessions", "user_context", "_meta"}
 	for _, table := range tables {
 		var name string
 		err := db.QueryRow(
