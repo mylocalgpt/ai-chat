@@ -115,15 +115,6 @@ func (m *MockAdapter) Send(ctx context.Context, session core.SessionInfo, messag
 		}
 	}
 
-	userMsg := executor.ResponseMessage{
-		Role:      "user",
-		Content:   message,
-		Timestamp: time.Now().UTC(),
-	}
-	if err := executor.AppendMessage(session.ResponseFile, userMsg); err != nil {
-		return fmt.Errorf("appending user message: %w", err)
-	}
-
 	agentMsg := executor.ResponseMessage{
 		Role:      "agent",
 		Content:   resp.Content,

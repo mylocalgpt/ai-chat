@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,7 +53,18 @@ type Manager struct {
 	watcher    *Watcher
 	reaper     *Reaper
 	cfg        ManagerConfig
+	pending    map[string]pendingConfirmation
 	mu         sync.Mutex
+}
+
+type pendingConfirmation struct {
+	SenderID    string
+	Channel     string
+	WorkspaceID int64
+	SessionID   int64
+	Token       string
+	Message     string
+	ExpiresAt   time.Time
 }
 
 type ManagerConfig struct {
@@ -76,7 +89,7 @@ func NewManager(store sessionStore, adapters AdapterRegistry, proxy *executor.Se
 	}
 
 	responseCh := make(chan core.ResponseEvent, 100)
-	watcher := NewWatcher(cfg.ResponsesDir, responseCh, store)
+	watcher := NewWatcher(cfg.ResponsesDir, responseCh, store, proxy)
 	reaper := NewReaper(store, adapters, ReaperConfig{
 		SoftIdleTimeout: cfg.SoftIdleTimeout,
 		HardIdleTimeout: cfg.HardIdleTimeout,
@@ -91,6 +104,7 @@ func NewManager(store sessionStore, adapters AdapterRegistry, proxy *executor.Se
 		watcher:    watcher,
 		reaper:     reaper,
 		cfg:        cfg,
+		pending:    make(map[string]pendingConfirmation),
 	}
 }
 
@@ -100,26 +114,44 @@ func (m *Manager) Send(ctx context.Context, senderID, channel, message string) e
 		return err
 	}
 
-	adapter, err := m.adapters.GetAdapter(sess.Agent)
-	if err != nil {
-		return fmt.Errorf("getting adapter for agent %q: %w", sess.Agent, err)
-	}
-
-	if err := adapter.Send(ctx, *info, message); err != nil {
-		return fmt.Errorf("adapter send: %w", err)
-	}
-
-	if err := m.store.TouchSession(ctx, sess.ID); err != nil {
-		slog.Warn("failed to touch session", "session_id", sess.ID, "error", err)
-	}
-
-	if m.proxy != nil {
-		if flags := m.proxy.Scan(message); len(flags) > 0 {
-			slog.Warn("security flags in message", "flags", flags)
+	decision := m.evaluateSecurity(message)
+	switch decision.Action {
+	case core.SecurityActionBlock:
+		return &core.SecurityDecisionError{Decision: decision}
+	case core.SecurityActionConfirm:
+		token, err := m.storePendingConfirmation(senderID, channel, sess.WorkspaceID, sess.ID, message)
+		if err != nil {
+			return err
 		}
+		decision.PendingID = token
+		return &core.SecurityDecisionError{Decision: decision}
+	default:
+		return m.dispatchMessage(ctx, sess, info, message)
+	}
+}
+
+func (m *Manager) HandleSecurityDecision(ctx context.Context, senderID, channel, token string, approved bool) (string, error) {
+	pending, ok := m.takePendingConfirmation(senderID, channel, token)
+	if !ok {
+		return "That confirmation has expired or was already used.", nil
+	}
+	if !approved {
+		return "Cancelled.", nil
 	}
 
-	return nil
+	ws, err := m.store.GetWorkspaceByID(ctx, pending.WorkspaceID)
+	if err != nil {
+		return "", fmt.Errorf("getting workspace: %w", err)
+	}
+	sess, err := m.store.GetSessionByID(ctx, pending.SessionID)
+	if err != nil {
+		return "", fmt.Errorf("getting session: %w", err)
+	}
+	info := m.buildSessionInfo(ws, sess)
+	if err := m.dispatchMessage(ctx, sess, info, pending.Message); err != nil {
+		return "", err
+	}
+	return "Message approved and sent.", nil
 }
 
 func (m *Manager) GetOrCreateActiveSession(ctx context.Context, senderID, channel, agent string) (*core.Session, *core.SessionInfo, error) {
@@ -520,7 +552,7 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
@@ -532,6 +564,20 @@ func (m *Manager) Run(ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 		m.reaper.Run(ctx)
+	}()
+
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				m.cleanupExpiredPendingConfirmations()
+			}
+		}
 	}()
 
 	<-ctx.Done()
@@ -560,4 +606,102 @@ func getDefaultAgent(ws *core.Workspace) string {
 		}
 	}
 	return "opencode"
+}
+
+func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info *core.SessionInfo, message string) error {
+	adapter, err := m.adapters.GetAdapter(sess.Agent)
+	if err != nil {
+		return fmt.Errorf("getting adapter for agent %q: %w", sess.Agent, err)
+	}
+	if err := executor.AppendMessage(info.ResponseFile, executor.ResponseMessage{
+		Role:      "user",
+		Content:   message,
+		Timestamp: time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("append user message: %w", err)
+	}
+	if err := adapter.Send(ctx, *info, message); err != nil {
+		return fmt.Errorf("adapter send: %w", err)
+	}
+	if err := m.store.TouchSession(ctx, sess.ID); err != nil {
+		slog.Warn("failed to touch session", "session_id", sess.ID, "error", err)
+	}
+	return nil
+}
+
+func (m *Manager) evaluateSecurity(message string) core.SecurityDecision {
+	if m.proxy == nil {
+		return core.SecurityDecision{Action: core.SecurityActionAllow}
+	}
+	flags := m.proxy.Scan(message)
+	if len(flags) == 0 {
+		return core.SecurityDecision{Action: core.SecurityActionAllow}
+	}
+	for _, flag := range flags {
+		if isBlockingSecurityFlag(flag.Keyword) {
+			return core.SecurityDecision{Action: core.SecurityActionBlock, Reason: "Message blocked because it appears to contain a live credential or exported secret."}
+		}
+	}
+	return core.SecurityDecision{Action: core.SecurityActionConfirm, Reason: "This message may include sensitive information. Approve it before it is sent to the agent."}
+}
+
+func isBlockingSecurityFlag(keyword string) bool {
+	switch keyword {
+	case "Bearer ", "sk-", "ghp_", "ghs_", "AKIA", "export-env-var":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Manager) storePendingConfirmation(senderID, channel string, workspaceID, sessionID int64, message string) (string, error) {
+	token, err := newPendingToken()
+	if err != nil {
+		return "", fmt.Errorf("creating pending confirmation token: %w", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pending[token] = pendingConfirmation{
+		SenderID:    senderID,
+		Channel:     channel,
+		WorkspaceID: workspaceID,
+		SessionID:   sessionID,
+		Token:       token,
+		Message:     message,
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+	}
+	return token, nil
+}
+
+func (m *Manager) takePendingConfirmation(senderID, channel, token string) (pendingConfirmation, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pending, ok := m.pending[token]
+	if !ok {
+		return pendingConfirmation{}, false
+	}
+	delete(m.pending, token)
+	if pending.SenderID != senderID || pending.Channel != channel || time.Now().After(pending.ExpiresAt) {
+		return pendingConfirmation{}, false
+	}
+	return pending, true
+}
+
+func (m *Manager) cleanupExpiredPendingConfirmations() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	for token, pending := range m.pending {
+		if now.After(pending.ExpiresAt) {
+			delete(m.pending, token)
+		}
+	}
+}
+
+func newPendingToken() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }

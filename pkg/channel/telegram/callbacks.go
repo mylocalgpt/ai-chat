@@ -5,8 +5,6 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -14,19 +12,12 @@ import (
 )
 
 type callbackHandler struct {
-	pendingMessages map[string]pendingEntry
-	pendingMutex    sync.RWMutex
-	router          Router
-}
-
-type pendingEntry struct {
-	expiresAt time.Time
+	router Router
 }
 
 func newCallbackHandler(r Router) *callbackHandler {
 	return &callbackHandler{
-		pendingMessages: make(map[string]pendingEntry),
-		router:          r,
+		router: r,
 	}
 }
 
@@ -150,31 +141,4 @@ func (h *callbackHandler) renderCallbackResult(ctx context.Context, b *bot.Bot, 
 		return
 	}
 	_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{ChatID: chatID, MessageID: messageID, Text: text})
-}
-
-func (h *callbackHandler) cleanupExpired() {
-	h.pendingMutex.Lock()
-	defer h.pendingMutex.Unlock()
-
-	now := time.Now()
-	for ref, pending := range h.pendingMessages {
-		if now.After(pending.expiresAt) {
-			delete(h.pendingMessages, ref)
-		}
-	}
-}
-
-func (h *callbackHandler) startCleanup(ctx context.Context) {
-	ticker := time.NewTicker(time.Minute)
-	go func() {
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				h.cleanupExpired()
-			}
-		}
-	}()
 }

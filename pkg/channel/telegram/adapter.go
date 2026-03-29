@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,10 +24,6 @@ type Router interface {
 	HandleSecurityDecision(ctx context.Context, senderID, channel, token string, approved bool) (router.Result, error)
 }
 
-type SessionManager interface {
-	ResponseCh() <-chan core.ResponseEvent
-}
-
 type TelegramAdapterConfig struct {
 	BotToken     string
 	AllowedUsers []int64
@@ -38,15 +33,11 @@ type TelegramAdapter struct {
 	bot          *bot.Bot
 	allowedUsers map[int64]bool
 	router       Router
-	sessionMgr   SessionManager
 	store        *store.Store
 	cancel       context.CancelFunc
 	running      atomic.Bool
 
 	callbackHandler *callbackHandler
-
-	sessionToChat      map[int64]string
-	sessionToChatMutex sync.RWMutex
 
 	pendingSearch map[string]time.Time
 }
@@ -60,7 +51,6 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 	adapter := &TelegramAdapter{
 		allowedUsers:    allowed,
 		store:           st,
-		sessionToChat:   make(map[int64]string),
 		pendingSearch:   make(map[string]time.Time),
 		callbackHandler: newCallbackHandler(nil),
 	}
@@ -79,10 +69,6 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 func (t *TelegramAdapter) SetRouter(r Router) {
 	t.router = r
 	t.callbackHandler.router = r
-}
-
-func (t *TelegramAdapter) SetSessionManager(sm SessionManager) {
-	t.sessionMgr = sm
 }
 
 func (t *TelegramAdapter) SetMessageHandler(fn func(context.Context, core.InboundMessage)) {
@@ -178,12 +164,6 @@ func (t *TelegramAdapter) Start(ctx context.Context) error {
 		slog.Error("failed to sync telegram commands on startup", "error", err)
 	}
 
-	if t.sessionMgr != nil {
-		go t.listenForResponses(childCtx)
-	}
-
-	t.callbackHandler.startCleanup(childCtx)
-
 	return nil
 }
 
@@ -234,44 +214,6 @@ func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) er
 	}
 	return nil
 }
-
-func (t *TelegramAdapter) listenForResponses(ctx context.Context) {
-	if t.sessionMgr == nil {
-		return
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case resp := <-t.sessionMgr.ResponseCh():
-			t.sessionToChatMutex.RLock()
-			chatID, ok := t.sessionToChat[resp.SessionID]
-			t.sessionToChatMutex.RUnlock()
-
-			if !ok {
-				chatID = resp.SenderID
-			}
-
-			if chatID == "" {
-				continue
-			}
-
-			_ = t.Send(ctx, core.OutboundMessage{
-				Channel:     "telegram",
-				RecipientID: chatID,
-				Content:     resp.Content,
-			})
-		}
-	}
-}
-
-func (t *TelegramAdapter) RegisterSessionChat(sessionID int64, chatID string) {
-	t.sessionToChatMutex.Lock()
-	defer t.sessionToChatMutex.Unlock()
-	t.sessionToChat[sessionID] = chatID
-}
-
 func (t *TelegramAdapter) renderResult(ctx context.Context, recipientID, replyToID string, result router.Result) error {
 	switch result.Kind {
 	case router.ResultNoReply:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -660,5 +661,64 @@ func TestResponseCh(t *testing.T) {
 	ch := m.ResponseCh()
 	if ch == nil {
 		t.Fatal("expected response channel, got nil")
+	}
+}
+
+func TestSendReturnsSecurityConfirmation(t *testing.T) {
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		workspace:       &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()},
+		session:         &core.Session{ID: 42, WorkspaceID: 1, Agent: "opencode", TmuxSession: "ai-chat-lab-a3f2", Slug: "a3f2"},
+	}
+	adapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{adapters: map[string]executor.AgentAdapter{"opencode": adapter}, agents: []string{"opencode"}}
+	m := NewManager(store, registry, executor.NewSecurityProxy(), ManagerConfig{ResponsesDir: filepath.Join(t.TempDir(), "responses")})
+
+	err := m.Send(context.Background(), "user1", "telegram", "my password is hunter2")
+	var decisionErr *core.SecurityDecisionError
+	if !errors.As(err, &decisionErr) {
+		t.Fatalf("expected security decision error, got %v", err)
+	}
+	if decisionErr.Decision.Action != core.SecurityActionConfirm {
+		t.Fatalf("unexpected action: %s", decisionErr.Decision.Action)
+	}
+	if decisionErr.Decision.PendingID == "" {
+		t.Fatal("expected pending token")
+	}
+}
+
+func TestHandleSecurityDecisionApprovedSendsMessage(t *testing.T) {
+	responsesDir := filepath.Join(t.TempDir(), "responses")
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		workspace:       &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()},
+		session:         &core.Session{ID: 42, WorkspaceID: 1, Agent: "opencode", TmuxSession: "ai-chat-lab-a3f2", Slug: "a3f2"},
+	}
+	adapter := &mockAdapter{name: "opencode", isAlive: true}
+	registry := &mockRegistry{adapters: map[string]executor.AgentAdapter{"opencode": adapter}, agents: []string{"opencode"}}
+	m := NewManager(store, registry, executor.NewSecurityProxy(), ManagerConfig{ResponsesDir: responsesDir})
+	if _, err := executor.NewResponseFile(responsesDir, *m.buildSessionInfo(store.workspace, store.session)); err != nil {
+		t.Fatalf("creating response file: %v", err)
+	}
+
+	err := m.Send(context.Background(), "user1", "telegram", "my password is hunter2")
+	var decisionErr *core.SecurityDecisionError
+	if !errors.As(err, &decisionErr) {
+		t.Fatalf("expected security decision error, got %v", err)
+	}
+
+	text, err := m.HandleSecurityDecision(context.Background(), "user1", "telegram", decisionErr.Decision.PendingID, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "Message approved and sent." {
+		t.Fatalf("unexpected text: %q", text)
+	}
+	rf, err := executor.ReadResponseFile(filepath.Join(responsesDir, "ai-chat-lab-a3f2.json"))
+	if err != nil {
+		t.Fatalf("reading response file: %v", err)
+	}
+	if len(rf.Messages) != 1 || rf.Messages[0].Role != "user" {
+		t.Fatalf("unexpected messages: %+v", rf.Messages)
 	}
 }

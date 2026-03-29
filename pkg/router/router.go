@@ -12,6 +12,7 @@ import (
 
 type SessionManager interface {
 	Send(ctx context.Context, senderID, channel, message string) error
+	HandleSecurityDecision(ctx context.Context, senderID, channel, token string, approved bool) (string, error)
 	CreateSession(ctx context.Context, workspaceID int64, agent string) (*core.SessionInfo, error)
 	CreateSessionForSender(ctx context.Context, senderID, channel, agent string) (*core.SessionInfo, error)
 	SwitchActiveSession(ctx context.Context, senderID, channel string, workspaceID, sessionID int64) error
@@ -47,6 +48,15 @@ func (r *Router) Route(ctx context.Context, req Request) (Result, error) {
 		if r.sessionMgr != nil {
 			err := r.sessionMgr.Send(ctx, req.Message.SenderID, req.Message.Channel, req.Message.Content)
 			if err != nil {
+				var decisionErr *core.SecurityDecisionError
+				if errors.As(err, &decisionErr) {
+					switch decisionErr.Decision.Action {
+					case core.SecurityActionConfirm:
+						return Result{Kind: ResultSecurityConfirmation, SecurityConfirmation: &SecurityConfirmationData{Token: decisionErr.Decision.PendingID, Summary: decisionErr.Decision.Reason}}, nil
+					case core.SecurityActionBlock:
+						return TextResult(decisionErr.Decision.Reason), nil
+					}
+				}
 				if errors.Is(err, store.ErrNotFound) {
 					return r.workspacePickerResult(ctx, req.Message.SenderID, req.Message.Channel, "Select a workspace to get started:")
 				}
@@ -110,11 +120,15 @@ func (r *Router) HandleSessionSelection(ctx context.Context, senderID, channel s
 	return TextResult(fmt.Sprintf("Switched to session %s", sess.TmuxSession)), nil
 }
 
-func (r *Router) HandleSecurityDecision(_ context.Context, _, _, _ string, approved bool) (Result, error) {
-	if approved {
-		return TextResult("Security confirmation is not available yet."), nil
+func (r *Router) HandleSecurityDecision(ctx context.Context, senderID, channel, token string, approved bool) (Result, error) {
+	if r.sessionMgr == nil {
+		return TextResult("Session manager not configured."), nil
 	}
-	return TextResult("Cancelled."), nil
+	text, err := r.sessionMgr.HandleSecurityDecision(ctx, senderID, channel, token, approved)
+	if err != nil {
+		return Result{}, fmt.Errorf("handling security decision: %w", err)
+	}
+	return TextResult(text), nil
 }
 
 func (r *Router) handleWorkspaces(ctx context.Context, msg *core.InboundMessage) (Result, error) {

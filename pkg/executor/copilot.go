@@ -50,13 +50,6 @@ func (a *CopilotAdapter) Spawn(_ context.Context, session core.SessionInfo) erro
 
 // Send runs copilot with the message and writes the response to the file.
 func (a *CopilotAdapter) Send(ctx context.Context, session core.SessionInfo, message string) error {
-	var flags []SecurityFlag
-
-	// Scan input message for security patterns.
-	if a.proxy != nil {
-		flags = append(flags, a.proxy.Scan(message)...)
-	}
-
 	// Build command: copilot -p <message> -s --allow-all-tools
 	// -p: non-interactive mode, passes prompt directly
 	// -s: silent mode, outputs only agent response
@@ -77,11 +70,6 @@ func (a *CopilotAdapter) Send(ctx context.Context, session core.SessionInfo, mes
 		}
 	}
 
-	// Scan response for security patterns.
-	if a.proxy != nil && len(output) > 0 {
-		flags = append(flags, a.proxy.Scan(string(output))...)
-	}
-
 	// Append agent response to response file.
 	if len(output) > 0 {
 		if err := AppendMessage(session.ResponseFile, ResponseMessage{
@@ -91,11 +79,6 @@ func (a *CopilotAdapter) Send(ctx context.Context, session core.SessionInfo, mes
 		}); err != nil {
 			return fmt.Errorf("copilot send: append agent message: %w", err)
 		}
-	}
-
-	// Return security flags if any.
-	if len(flags) > 0 {
-		return &SecurityFlagError{Flags: flags, Err: sendErr}
 	}
 
 	return sendErr

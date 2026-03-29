@@ -87,13 +87,6 @@ func (a *OpenCodeAdapter) Spawn(ctx context.Context, session core.SessionInfo) e
 
 // Send sends a message to OpenCode and writes the response to the file.
 func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, message string) error {
-	var flags []SecurityFlag
-
-	// Scan input message for security patterns.
-	if a.proxy != nil {
-		flags = append(flags, a.proxy.Scan(message)...)
-	}
-
 	// Capture pre-send snapshot.
 	snapshot, err := a.tmux.CapturePaneRaw(session.Name, 200)
 	if err != nil {
@@ -147,11 +140,6 @@ func (a *OpenCodeAdapter) Send(ctx context.Context, session core.SessionInfo, me
 	}
 
 done:
-	// Scan response for security patterns.
-	if a.proxy != nil && response != "" {
-		flags = append(flags, a.proxy.Scan(response)...)
-	}
-
 	// Append agent response to response file.
 	if response != "" {
 		if err := AppendMessage(session.ResponseFile, ResponseMessage{
@@ -161,11 +149,6 @@ done:
 		}); err != nil {
 			return fmt.Errorf("opencode send: append agent message: %w", err)
 		}
-	}
-
-	// Return security flags if any.
-	if len(flags) > 0 {
-		return &SecurityFlagError{Flags: flags, Err: sendErr}
 	}
 
 	return sendErr

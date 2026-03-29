@@ -47,22 +47,15 @@ func TestMockAdapter_Send_WritesResponseFile(t *testing.T) {
 		t.Fatalf("ReadResponseFile() error = %v", err)
 	}
 
-	if len(rf.Messages) != 2 {
-		t.Fatalf("len(Messages) = %d, want 2", len(rf.Messages))
+	if len(rf.Messages) != 1 {
+		t.Fatalf("len(Messages) = %d, want 1", len(rf.Messages))
 	}
 
-	if rf.Messages[0].Role != "user" {
-		t.Errorf("Messages[0].Role = %q, want %q", rf.Messages[0].Role, "user")
+	if rf.Messages[0].Role != "agent" {
+		t.Errorf("Messages[0].Role = %q, want %q", rf.Messages[0].Role, "agent")
 	}
-	if rf.Messages[0].Content != "ping" {
-		t.Errorf("Messages[0].Content = %q, want %q", rf.Messages[0].Content, "ping")
-	}
-
-	if rf.Messages[1].Role != "agent" {
-		t.Errorf("Messages[1].Role = %q, want %q", rf.Messages[1].Role, "agent")
-	}
-	if rf.Messages[1].Content != "pong" {
-		t.Errorf("Messages[1].Content = %q, want %q", rf.Messages[1].Content, "pong")
+	if rf.Messages[0].Content != "pong" {
+		t.Errorf("Messages[0].Content = %q, want %q", rf.Messages[0].Content, "pong")
 	}
 }
 
@@ -96,13 +89,13 @@ func TestMockAdapter_Send_FallbackEcho(t *testing.T) {
 		t.Fatalf("ReadResponseFile() error = %v", err)
 	}
 
-	if len(rf.Messages) != 2 {
-		t.Fatalf("len(Messages) = %d, want 2", len(rf.Messages))
+	if len(rf.Messages) != 1 {
+		t.Fatalf("len(Messages) = %d, want 1", len(rf.Messages))
 	}
 
 	want := "Echo: unknown message"
-	if rf.Messages[1].Content != want {
-		t.Errorf("Messages[1].Content = %q, want %q", rf.Messages[1].Content, want)
+	if rf.Messages[0].Content != want {
+		t.Errorf("Messages[0].Content = %q, want %q", rf.Messages[0].Content, want)
 	}
 }
 
@@ -197,8 +190,11 @@ func TestMockAdapter_AddResponse(t *testing.T) {
 		t.Fatalf("ReadResponseFile() error = %v", err)
 	}
 
-	if rf.Messages[1].Content != "custom response" {
-		t.Errorf("Messages[1].Content = %q, want %q", rf.Messages[1].Content, "custom response")
+	if len(rf.Messages) != 1 {
+		t.Fatalf("len(Messages) = %d, want 1", len(rf.Messages))
+	}
+	if rf.Messages[0].Content != "custom response" {
+		t.Errorf("Messages[0].Content = %q, want %q", rf.Messages[0].Content, "custom response")
 	}
 }
 
@@ -274,12 +270,16 @@ func TestMockAdapter_PreconfiguredResponses(t *testing.T) {
 				t.Fatalf("ReadResponseFile() error = %v", err)
 			}
 
-			if tt.expected != "" && rf.Messages[1].Content != tt.expected {
-				t.Errorf("Messages[1].Content = %q, want %q", rf.Messages[1].Content, tt.expected)
+			if len(rf.Messages) != 1 {
+				t.Fatalf("len(Messages) = %d, want 1", len(rf.Messages))
 			}
 
-			if tt.expected == "" && rf.Messages[1].Content == "" {
-				t.Errorf("Messages[1].Content is empty, expected non-empty")
+			if tt.expected != "" && rf.Messages[0].Content != tt.expected {
+				t.Errorf("Messages[0].Content = %q, want %q", rf.Messages[0].Content, tt.expected)
+			}
+
+			if tt.expected == "" && rf.Messages[0].Content == "" {
+				t.Errorf("Messages[0].Content is empty, expected non-empty")
 			}
 		})
 	}

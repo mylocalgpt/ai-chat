@@ -77,6 +77,8 @@ func TestParse_InvalidCommand(t *testing.T) {
 type mockSessionManager struct {
 	sendCalled            bool
 	sendErr               error
+	handleSecurityText    string
+	handleSecurityErr     error
 	createSessionCalled   bool
 	createForSenderCalled bool
 	switchSessionCalled   bool
@@ -93,6 +95,12 @@ type mockSessionManager struct {
 func (m *mockSessionManager) Send(context.Context, string, string, string) error {
 	m.sendCalled = true
 	return m.sendErr
+}
+func (m *mockSessionManager) HandleSecurityDecision(context.Context, string, string, string, bool) (string, error) {
+	if m.handleSecurityText != "" {
+		return m.handleSecurityText, m.handleSecurityErr
+	}
+	return "Cancelled.", m.handleSecurityErr
 }
 func (m *mockSessionManager) CreateSession(context.Context, int64, string) (*core.SessionInfo, error) {
 	m.createSessionCalled = true
@@ -220,5 +228,26 @@ func TestRouteUnexpectedError(t *testing.T) {
 	_, err := (&Router{sessionMgr: &mockSessionManager{sendErr: errors.New("boom")}}).Route(context.Background(), Request{Message: &core.InboundMessage{Content: "hello world", SenderID: "user1", Channel: "telegram"}})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestRouteReturnsSecurityConfirmationResult(t *testing.T) {
+	result := routeMessage(t, &Router{sessionMgr: &mockSessionManager{sendErr: &core.SecurityDecisionError{Decision: core.SecurityDecision{Action: core.SecurityActionConfirm, PendingID: "token-123", Reason: "confirm it"}}}}, "my password is hunter2")
+	if result.Kind != ResultSecurityConfirmation {
+		t.Fatalf("kind = %q, want %q", result.Kind, ResultSecurityConfirmation)
+	}
+	if result.SecurityConfirmation == nil || result.SecurityConfirmation.Token != "token-123" {
+		t.Fatalf("unexpected security confirmation: %+v", result.SecurityConfirmation)
+	}
+}
+
+func TestHandleSecurityDecisionDelegatesToSessionManager(t *testing.T) {
+	r := &Router{sessionMgr: &mockSessionManager{handleSecurityText: "Message approved and sent."}}
+	result, err := r.HandleSecurityDecision(context.Background(), "user1", "telegram", "token-123", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Kind != ResultText || result.Text != "Message approved and sent." {
+		t.Fatalf("unexpected result: %+v", result)
 	}
 }

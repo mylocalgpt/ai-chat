@@ -125,7 +125,7 @@ func TestWatcher_EmitsEventOnWrite(t *testing.T) {
 		},
 	}
 
-	w := NewWatcher(dir, ch, store)
+	w := NewWatcher(dir, ch, store, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -183,7 +183,7 @@ func TestWatcher_NoDuplicateEvents(t *testing.T) {
 		},
 	}
 
-	w := NewWatcher(dir, ch, store)
+	w := NewWatcher(dir, ch, store, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -248,7 +248,7 @@ func TestWatcher_MultipleFiles(t *testing.T) {
 		},
 	}
 
-	w := NewWatcher(dir, ch, store)
+	w := NewWatcher(dir, ch, store, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -294,7 +294,7 @@ func TestWatcher_PollingFallback(t *testing.T) {
 		},
 	}
 
-	w := NewWatcher(dir, ch, store)
+	w := NewWatcher(dir, ch, store, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -312,7 +312,7 @@ func TestWatcher_SessionNotFound(t *testing.T) {
 		activeSession: &core.ActiveWorkspaceSession{SenderID: "user1", Channel: "telegram"},
 	}
 
-	w := NewWatcher(dir, ch, store)
+	w := NewWatcher(dir, ch, store, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

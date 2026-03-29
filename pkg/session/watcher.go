@@ -17,15 +17,17 @@ type Watcher struct {
 	dir        string
 	responseCh chan<- core.ResponseEvent
 	store      sessionStore
+	proxy      *executor.SecurityProxy
 	lastSeen   map[string]int64
 	mu         sync.Mutex
 }
 
-func NewWatcher(dir string, ch chan<- core.ResponseEvent, store sessionStore) *Watcher {
+func NewWatcher(dir string, ch chan<- core.ResponseEvent, store sessionStore, proxy *executor.SecurityProxy) *Watcher {
 	return &Watcher{
 		dir:        dir,
 		responseCh: ch,
 		store:      store,
+		proxy:      proxy,
 		lastSeen:   make(map[string]int64),
 	}
 }
@@ -141,6 +143,13 @@ func (w *Watcher) processFile(ctx context.Context, path string) {
 	}
 	if content == "" {
 		return
+	}
+	if active.WorkspaceID != sess.WorkspaceID {
+		slog.Debug("active mapping workspace mismatch", "session_id", sess.ID, "session_workspace_id", sess.WorkspaceID, "mapping_workspace_id", active.WorkspaceID)
+		return
+	}
+	if w.proxy != nil && len(w.proxy.Scan(content)) > 0 {
+		content = "Response blocked because it may contain sensitive content."
 	}
 
 	event := core.ResponseEvent{
