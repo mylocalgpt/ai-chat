@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -120,23 +122,70 @@ func forwardResponses(ctx context.Context, st messageStore, events <-chan core.R
 			if !ok {
 				return
 			}
-			if err := channel.Send(ctx, core.OutboundMessage{
-				Channel:     event.Channel,
-				RecipientID: event.SenderID,
-				Content:     event.Content,
-			}); err != nil {
-				slog.Warn("failed to send response event", "error", err)
-				continue
+
+			content := event.Content
+			streamed := false
+
+			if event.Events != nil {
+				sc, ok := channel.(core.StreamingChannel)
+				if ok {
+					chatID, err := strconv.ParseInt(event.SenderID, 10, 64)
+					if err != nil {
+						slog.Warn("failed to parse chatID for streaming", "senderID", event.SenderID, "error", err)
+						drainEvents(event.Events)
+					} else {
+						replyToID, _ := strconv.Atoi(event.ReplyToID)
+						responseText, err := sc.SendStreaming(ctx, chatID, replyToID, event.AgentSessionID, event.Events)
+						if err != nil {
+							slog.Warn("streaming delivery failed", "error", err)
+							continue
+						}
+						content = responseText
+						streamed = true
+
+						if event.ResponseFile != "" {
+							if err := executor.AppendMessage(event.ResponseFile, executor.ResponseMessage{
+								Role:    "agent",
+								Content: content,
+							}); err != nil {
+								slog.Warn("failed to persist streaming response to file",
+									"path", event.ResponseFile, "error", err)
+							}
+						}
+					}
+				} else {
+					slog.Info("channel does not support streaming, falling back to Send()",
+						"channel", fmt.Sprintf("%T", channel))
+					drainEvents(event.Events)
+				}
 			}
+
+			if !streamed {
+				if err := channel.Send(ctx, core.OutboundMessage{
+					Channel:     event.Channel,
+					RecipientID: event.SenderID,
+					Content:     content,
+				}); err != nil {
+					slog.Warn("failed to send response event", "error", err)
+					continue
+				}
+			}
+
 			if err := st.CreateMessage(ctx, &core.Message{
 				Channel:   event.Channel,
 				SenderID:  event.SenderID,
-				Content:   event.Content,
+				Content:   content,
 				Direction: core.OutboundDirection,
 				Status:    core.StatusDone,
 			}); err != nil {
 				slog.Warn("failed to persist response event", "error", err)
 			}
 		}
+	}
+}
+
+// drainEvents consumes all remaining events from a channel to prevent goroutine leaks.
+func drainEvents(events <-chan core.AgentEvent) {
+	for range events {
 	}
 }

@@ -17,6 +17,14 @@ type Channel interface {
 	Send(ctx context.Context, msg OutboundMessage) error
 }
 
+// StreamingChannel extends Channel with support for streaming agent events.
+// Channels that implement this interface receive real-time progress updates
+// instead of waiting for the final response.
+type StreamingChannel interface {
+	Channel
+	SendStreaming(ctx context.Context, chatID int64, replyToID int, agentSessionID string, events <-chan AgentEvent) (string, error)
+}
+
 // InboundMessage is a message received from a messaging platform.
 type InboundMessage struct {
 	ID        string
@@ -154,9 +162,13 @@ type AgentEvent struct {
 
 // ResponseEvent represents a response from an agent session.
 type ResponseEvent struct {
-	SessionName string
-	SessionID   int64
-	SenderID    string
-	Channel     string
-	Content     string
+	SessionName    string
+	SessionID      int64
+	SenderID       string
+	Channel        string
+	Content        string
+	Events         <-chan AgentEvent // nil for non-streaming responses
+	ReplyToID      string            // original user message ID for reply threading
+	AgentSessionID string            // opencode session ID (ses_xxx) for stop button
+	ResponseFile   string            // path to response JSON for persistence
 }
