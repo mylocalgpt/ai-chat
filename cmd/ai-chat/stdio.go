@@ -83,7 +83,6 @@ func runStdio() {
 	srv := mcppkg.NewServer(st, mcpCfg, opts...)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 	var backgroundWG interface{ Wait() }
 	if tg != nil {
 		backgroundWG = app.StartBackground(ctx, st, manager, tg)
@@ -91,9 +90,17 @@ func runStdio() {
 		backgroundWG = app.StartManagerBackground(ctx, manager)
 	}
 
-	if err := srv.Run(ctx); err != nil {
+	err = srv.Run(ctx)
+	shutdownStdioBackground(cancel, backgroundWG)
+	if err != nil {
 		slog.Error("mcp server exited with error", "error", err)
 		os.Exit(1)
 	}
-	backgroundWG.Wait()
+}
+
+func shutdownStdioBackground(cancel context.CancelFunc, backgroundWG interface{ Wait() }) {
+	cancel()
+	if backgroundWG != nil {
+		backgroundWG.Wait()
+	}
 }

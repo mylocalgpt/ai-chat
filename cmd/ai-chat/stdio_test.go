@@ -105,3 +105,26 @@ func TestStdioBackgroundForwardsSessionResponses(t *testing.T) {
 		t.Fatal("timed out waiting for watcher-driven response delivery")
 	}
 }
+
+func TestShutdownStdioBackgroundCancelsBeforeWait(t *testing.T) {
+	cancelled := make(chan struct{})
+	shutdownStdioBackground(func() {
+		close(cancelled)
+	}, waitRecorder{
+		wait: func() {
+			select {
+			case <-cancelled:
+			case <-time.After(2 * time.Second):
+				t.Fatal("wait started before cancel")
+			}
+		},
+	})
+}
+
+type waitRecorder struct {
+	wait func()
+}
+
+func (w waitRecorder) Wait() {
+	w.wait()
+}
