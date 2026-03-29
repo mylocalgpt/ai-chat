@@ -51,6 +51,11 @@ func (b *mockProgressBot) EditMessageText(_ context.Context, params *bot.EditMes
 	b.editedMessages = append(b.editedMessages, params)
 	return &models.Message{ID: params.MessageID, Chat: models.Chat{ID: params.ChatID.(int64)}, Text: params.Text}, nil
 }
+func (b *mockProgressBot) SendDocument(_ context.Context, params *bot.SendDocumentParams) (*models.Message, error) {
+	msg := &models.Message{ID: b.nextMessageID, Chat: models.Chat{ID: params.ChatID.(int64)}}
+	b.nextMessageID++
+	return msg, nil
+}
 
 func TestProgressReporter_Start(t *testing.T) {
 	mb := newMockProgressBot()

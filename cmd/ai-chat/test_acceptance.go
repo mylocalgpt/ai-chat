@@ -316,6 +316,12 @@ func (b *acceptanceTelegramBot) EditMessageText(_ context.Context, params *bot.E
 	return &models.Message{ID: params.MessageID, Chat: models.Chat{ID: b.chatID}, Text: params.Text}, nil
 }
 
+func (b *acceptanceTelegramBot) SendDocument(_ context.Context, params *bot.SendDocumentParams) (*models.Message, error) {
+	msg := &models.Message{ID: b.nextMessageID, Chat: models.Chat{ID: b.chatID}}
+	b.nextMessageID++
+	return msg, nil
+}
+
 func (b *acceptanceTelegramBot) AnswerCallbackQuery(_ context.Context, params *bot.AnswerCallbackQueryParams) (bool, error) {
 	b.callbackAnswers = append(b.callbackAnswers, params)
 	return true, nil
