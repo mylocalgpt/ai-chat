@@ -189,6 +189,7 @@ func TestSessionClear(t *testing.T) {
 	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
 
 	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
+	ms.activeByChannel["mcp:system"] = 1
 	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-test-abc1", Status: "active"}}
 
 	_, _, err := srv.handleSessionClear(context.Background(), &gomcp.CallToolRequest{}, SessionClearInput{
@@ -201,6 +202,44 @@ func TestSessionClear(t *testing.T) {
 
 	if len(sm.clearCalls) != 1 {
 		t.Errorf("expected 1 clear call, got %d", len(sm.clearCalls))
+	}
+}
+
+func TestSessionClearUsesActiveWorkspaceSessionByDefault(t *testing.T) {
+	ms := newMockStore()
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
+
+	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
+	ms.activeByChannel["mcp:system"] = 1
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-test-abc1", Status: "active"}}
+
+	_, _, err := srv.handleSessionClear(context.Background(), &gomcp.CallToolRequest{}, SessionClearInput{Workspace: "test"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sm.clearCalls) != 1 {
+		t.Fatalf("expected 1 clear call, got %d", len(sm.clearCalls))
+	}
+	if sm.clearCalls[0] != 10 {
+		t.Fatalf("expected active session ID 10, got %d", sm.clearCalls[0])
+	}
+}
+
+func TestSessionClearRequiresMatchingActiveWorkspaceForFallback(t *testing.T) {
+	ms := newMockStore()
+	sm := &mockSessionManager{}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
+
+	ms.workspaces["test"] = &core.Workspace{ID: 1, Name: "test", Path: "/tmp"}
+	ms.workspaces["other"] = &core.Workspace{ID: 2, Name: "other", Path: "/tmp"}
+	ms.activeByChannel["mcp:system"] = 1
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-test-abc1", Status: "active"}}
+
+	_, _, err := srv.handleSessionClear(context.Background(), &gomcp.CallToolRequest{}, SessionClearInput{Workspace: "other"})
+	if err == nil {
+		t.Fatal("expected error when workspace is not active and no session_name is provided")
 	}
 }
 

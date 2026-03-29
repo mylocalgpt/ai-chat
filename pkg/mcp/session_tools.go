@@ -173,8 +173,8 @@ func (s *Server) handleSessionClear(ctx context.Context, _ *gomcp.CallToolReques
 		return nil, nil, fmt.Errorf("session manager not available")
 	}
 
-	if input.Workspace == "" || input.SessionName == "" {
-		return nil, nil, fmt.Errorf("workspace and session_name are required")
+	if input.Workspace == "" {
+		return nil, nil, fmt.Errorf("workspace is required")
 	}
 
 	ws, err := s.store.GetWorkspace(ctx, input.Workspace)
@@ -185,12 +185,43 @@ func (s *Server) handleSessionClear(ctx context.Context, _ *gomcp.CallToolReques
 		return nil, nil, fmt.Errorf("looking up workspace: %w", err)
 	}
 
-	sess, err := s.store.GetSessionByReferenceInWorkspace(ctx, ws.ID, input.SessionName)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, nil, fmt.Errorf("session %q not found in workspace %q", input.SessionName, input.Workspace)
+	var sess *core.Session
+	if input.SessionName != "" {
+		sess, err = s.store.GetSessionByReferenceInWorkspace(ctx, ws.ID, input.SessionName)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, nil, fmt.Errorf("session %q not found in workspace %q", input.SessionName, input.Workspace)
+			}
+			return nil, nil, fmt.Errorf("looking up session: %w", err)
 		}
-		return nil, nil, fmt.Errorf("looking up session: %w", err)
+	} else {
+		activeWorkspace, err := s.store.GetActiveWorkspace(ctx, "mcp", "system")
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, nil, fmt.Errorf("no active MCP workspace set; provide session_name or switch to workspace %q first", input.Workspace)
+			}
+			return nil, nil, fmt.Errorf("looking up active workspace: %w", err)
+		}
+		if activeWorkspace.WorkspaceID != ws.ID {
+			return nil, nil, fmt.Errorf("workspace %q is not the active MCP workspace; provide session_name or switch to it first", input.Workspace)
+		}
+		activeSession, err := s.store.GetActiveSessionForWorkspace(ctx, "mcp", "system", ws.ID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, nil, fmt.Errorf("no active MCP session in workspace %q; provide session_name or switch to a session first", input.Workspace)
+			}
+			return nil, nil, fmt.Errorf("looking up active session: %w", err)
+		}
+		sess, err = s.store.GetSessionByID(ctx, activeSession.SessionID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, nil, fmt.Errorf("active MCP session for workspace %q not found", input.Workspace)
+			}
+			return nil, nil, fmt.Errorf("looking up active session record: %w", err)
+		}
+		if sess.WorkspaceID != ws.ID {
+			return nil, nil, fmt.Errorf("active MCP session does not belong to workspace %q", input.Workspace)
+		}
 	}
 
 	newSess, err := s.sessionMgr.ClearSession(ctx, sess.ID)

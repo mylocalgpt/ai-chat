@@ -28,6 +28,9 @@ type MCPStore interface {
 	GetWorkspaceByID(ctx context.Context, id int64) (*core.Workspace, error)
 
 	GetActiveSession(ctx context.Context, workspaceID int64) (*core.Session, error)
+	GetActiveWorkspace(ctx context.Context, senderID, channel string) (*core.ActiveWorkspace, error)
+	GetActiveSessionForWorkspace(ctx context.Context, senderID, channel string, workspaceID int64) (*core.ActiveWorkspaceSession, error)
+	GetSessionByID(ctx context.Context, id int64) (*core.Session, error)
 	ListSessions(ctx context.Context) ([]core.Session, error)
 	ListSessionsForWorkspace(ctx context.Context, workspaceID int64) ([]core.Session, error)
 	GetSessionByName(ctx context.Context, name string) (*core.Session, error)

@@ -29,6 +29,10 @@ func runTelegramAcceptance(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("telegram acceptance configuration error: %w", err)
 	}
+	repoRoot, err := resolveAcceptanceTargetRepo()
+	if err != nil {
+		return err
+	}
 
 	tempDir, err := os.MkdirTemp("", "ai-chat-telegram-acceptance-*")
 	if err != nil {
@@ -85,7 +89,7 @@ func runTelegramAcceptance(configPath string) error {
 	}()
 
 	metadata, _ := json.Marshal(map[string]string{"default_agent": "mock"})
-	ws, err := st.CreateWorkspace(ctx, "telegram-acceptance", tempDir, "")
+	ws, err := st.CreateWorkspace(ctx, "telegram-acceptance", repoRoot, "")
 	if err != nil {
 		return fmt.Errorf("creating acceptance workspace: %w", err)
 	}
@@ -127,6 +131,24 @@ func runTelegramAcceptance(configPath string) error {
 	}
 
 	return nil
+}
+
+func resolveAcceptanceTargetRepo() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolving acceptance repo root: %w", err)
+	}
+	root := wd
+	for {
+		if info, err := os.Stat(filepath.Join(root, ".git")); err == nil && info != nil {
+			return root, nil
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			return "", fmt.Errorf("resolving acceptance repo root: no git repository found from %s", wd)
+		}
+		root = parent
+	}
 }
 
 func runtimeStep(ctx context.Context, adapter *telegram.TelegramAdapter, testBot *acceptanceTelegramBot, _ string, chatID int64, content string) error {

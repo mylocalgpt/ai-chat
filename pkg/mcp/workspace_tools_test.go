@@ -12,16 +12,18 @@ import (
 )
 
 type mockStore struct {
-	workspaces map[string]*core.Workspace
-	sessions   []core.Session
-	nextID     int64
-	pingErr    error
+	workspaces      map[string]*core.Workspace
+	sessions        []core.Session
+	nextID          int64
+	pingErr         error
+	activeByChannel map[string]int64
 }
 
 func newMockStore() *mockStore {
 	return &mockStore{
-		workspaces: make(map[string]*core.Workspace),
-		nextID:     1,
+		workspaces:      make(map[string]*core.Workspace),
+		nextID:          1,
+		activeByChannel: make(map[string]int64),
 	}
 }
 
@@ -99,6 +101,32 @@ func (m *mockStore) RenameWorkspace(_ context.Context, id int64, newName string)
 func (m *mockStore) GetActiveSession(_ context.Context, workspaceID int64) (*core.Session, error) {
 	for _, sess := range m.sessions {
 		if sess.WorkspaceID == workspaceID && sess.Status == "active" {
+			return &sess, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *mockStore) GetActiveWorkspace(_ context.Context, senderID, channel string) (*core.ActiveWorkspace, error) {
+	workspaceID, ok := m.activeByChannel[senderID+":"+channel]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return &core.ActiveWorkspace{SenderID: senderID, Channel: channel, WorkspaceID: workspaceID}, nil
+}
+
+func (m *mockStore) GetActiveSessionForWorkspace(_ context.Context, senderID, channel string, workspaceID int64) (*core.ActiveWorkspaceSession, error) {
+	for _, sess := range m.sessions {
+		if sess.WorkspaceID == workspaceID && sess.Status == "active" {
+			return &core.ActiveWorkspaceSession{SenderID: senderID, Channel: channel, WorkspaceID: workspaceID, SessionID: sess.ID}, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *mockStore) GetSessionByID(_ context.Context, id int64) (*core.Session, error) {
+	for _, sess := range m.sessions {
+		if sess.ID == id {
 			return &sess, nil
 		}
 	}
