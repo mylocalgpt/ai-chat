@@ -2,10 +2,11 @@ package telegram
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -15,27 +16,39 @@ import (
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
-// Compile-time interface check.
 var _ core.Channel = (*TelegramAdapter)(nil)
 
-// TelegramAdapterConfig holds the configuration for the Telegram adapter.
+type Router interface {
+	Route(ctx context.Context, msg core.InboundMessage) (string, error)
+}
+
+type SessionManager interface {
+	ResponseCh() <-chan core.ResponseEvent
+}
+
 type TelegramAdapterConfig struct {
 	BotToken     string
 	AllowedUsers []int64
 }
 
-// TelegramAdapter implements core.Channel for Telegram using long polling.
 type TelegramAdapter struct {
 	bot          *bot.Bot
 	allowedUsers map[int64]bool
-	msgHandler   func(context.Context, core.InboundMessage)
+	router       Router
+	sessionMgr   SessionManager
 	store        *store.Store
 	cancel       context.CancelFunc
 	running      atomic.Bool
+
+	callbackHandler *callbackHandler
+
+	sessionToChat      map[int64]string
+	sessionToChatMutex sync.RWMutex
+
+	pendingSearch      map[string]time.Time
+	pendingSearchMutex sync.RWMutex
 }
 
-// NewTelegramAdapter creates a new Telegram adapter. The bot token is used
-// once to create the underlying bot instance and is not stored.
 func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAdapter, error) {
 	allowed := make(map[int64]bool, len(cfg.AllowedUsers))
 	for _, uid := range cfg.AllowedUsers {
@@ -43,8 +56,11 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 	}
 
 	adapter := &TelegramAdapter{
-		allowedUsers: allowed,
-		store:        st,
+		allowedUsers:    allowed,
+		store:           st,
+		sessionToChat:   make(map[int64]string),
+		pendingSearch:   make(map[string]time.Time),
+		callbackHandler: newCallbackHandler(st),
 	}
 
 	b, err := bot.New(cfg.BotToken, bot.WithDefaultHandler(adapter.handleUpdate))
@@ -53,12 +69,34 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 	}
 	adapter.bot = b
 
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "", bot.MatchTypePrefix, adapter.callbackHandler.handleCallback)
+
 	return adapter, nil
 }
 
-// handleUpdate processes incoming Telegram updates. It enforces the allowlist,
-// normalizes the update into a core.InboundMessage, and dispatches to the
-// registered handler (or echoes back as a default).
+func (t *TelegramAdapter) SetRouter(r Router) {
+	t.router = r
+}
+
+func (t *TelegramAdapter) SetSessionManager(sm SessionManager) {
+	t.sessionMgr = sm
+}
+
+func (t *TelegramAdapter) SetMessageHandler(fn func(context.Context, core.InboundMessage)) {
+	t.router = &messageHandlerRouter{handler: fn}
+}
+
+type messageHandlerRouter struct {
+	handler func(context.Context, core.InboundMessage)
+}
+
+func (r *messageHandlerRouter) Route(ctx context.Context, msg core.InboundMessage) (string, error) {
+	if r.handler != nil {
+		r.handler(ctx, msg)
+	}
+	return "", nil
+}
+
 func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message == nil {
 		return
@@ -84,13 +122,26 @@ func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *
 		Raw:       update,
 	}
 
-	if t.msgHandler != nil {
-		t.msgHandler(ctx, msg)
+	if t.handleSpecialCommands(ctx, msg) {
 		return
 	}
 
-	// Default echo behavior for development; replaced when the orchestrator
-	// registers its own handler via SetMessageHandler.
+	if t.router != nil {
+		response, err := t.router.Route(ctx, msg)
+		if err != nil {
+			slog.Error("router error", "error", err, "sender_id", msg.SenderID)
+			return
+		}
+		if response != "" {
+			_ = t.Send(ctx, core.OutboundMessage{
+				Channel:     "telegram",
+				RecipientID: msg.SenderID,
+				Content:     response,
+			})
+		}
+		return
+	}
+
 	slog.Info("echo", "chat_id", msg.SenderID, "text_len", len(msg.Content))
 	_ = t.Send(ctx, core.OutboundMessage{
 		Channel:     "telegram",
@@ -99,8 +150,64 @@ func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *
 	})
 }
 
-// Start connects to Telegram and begins long polling. It probes the connection
-// with GetMe before launching the polling goroutine.
+func (t *TelegramAdapter) handleSpecialCommands(ctx context.Context, msg core.InboundMessage) bool {
+	content := strings.TrimSpace(msg.Content)
+
+	if content == "/workspaces" {
+		workspaces, err := t.store.ListWorkspaces(ctx)
+		if err != nil {
+			slog.Error("listing workspaces", "error", err)
+			return true
+		}
+		kb := WorkspaceKeyboard(workspaces, 0)
+		chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
+		_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:      chatID,
+			Text:        "Select a workspace:",
+			ReplyMarkup: kb,
+		})
+		return true
+	}
+
+	if content == "/sessions" {
+		uc, err := t.store.GetUserContext(ctx, msg.SenderID, msg.Channel)
+		if err != nil {
+			chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
+			_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: chatID,
+				Text:   "No active workspace. Use /workspaces to select one.",
+			})
+			return true
+		}
+
+		sessions, err := t.store.ListSessionsForWorkspace(ctx, uc.ActiveWorkspaceID)
+		if err != nil {
+			slog.Error("listing sessions", "error", err)
+			return true
+		}
+
+		var previews []SessionPreview
+		for _, s := range sessions {
+			previews = append(previews, SessionPreview{
+				Name:   fmt.Sprintf("ai-chat-%d-%s", uc.ActiveWorkspaceID, s.Slug),
+				Status: s.Status,
+				Age:    formatAge(s.LastActivity),
+			})
+		}
+
+		kb := SessionKeyboard(previews)
+		chatID, _ := strconv.ParseInt(msg.SenderID, 10, 64)
+		_, _ = t.bot.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:      chatID,
+			Text:        "Select a session:",
+			ReplyMarkup: kb,
+		})
+		return true
+	}
+
+	return false
+}
+
 func (t *TelegramAdapter) Start(ctx context.Context) error {
 	me, err := t.bot.GetMe(ctx)
 	if err != nil {
@@ -119,10 +226,15 @@ func (t *TelegramAdapter) Start(ctx context.Context) error {
 		slog.Error("failed to sync telegram commands on startup", "error", err)
 	}
 
+	if t.sessionMgr != nil {
+		go t.listenForResponses(childCtx)
+	}
+
+	t.callbackHandler.startCleanup(childCtx)
+
 	return nil
 }
 
-// Stop cancels the long polling context and shuts down the bot.
 func (t *TelegramAdapter) Stop() error {
 	if t.cancel != nil {
 		t.cancel()
@@ -131,23 +243,20 @@ func (t *TelegramAdapter) Stop() error {
 	return nil
 }
 
-// IsConnected reports whether the adapter has been started and is polling.
 func (t *TelegramAdapter) IsConnected() bool {
 	return t.bot != nil && t.running.Load()
 }
 
-// SetMessageHandler registers the callback invoked for each normalized
-// inbound message. Called by the orchestrator before Start.
-func (t *TelegramAdapter) SetMessageHandler(fn func(context.Context, core.InboundMessage)) {
-	t.msgHandler = fn
-}
-
-// Send delivers an outbound message to Telegram. Long messages are split into
-// chunks at natural boundaries before sending.
 func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) error {
-	chunks := ChunkMessage(msg.Content, TelegramMaxMessageLen)
+	formatted := FormatHTML(msg.Content)
+	chunks := SplitMessage(formatted, FormattedMaxLen)
 	if len(chunks) == 0 {
 		return nil
+	}
+
+	chatID, err := strconv.ParseInt(msg.RecipientID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("parsing recipient ID %q: %w", msg.RecipientID, err)
 	}
 
 	for i, chunk := range chunks {
@@ -156,7 +265,14 @@ func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) er
 			replyTo = msg.ReplyToID
 		}
 
-		if err := t.sendSingle(ctx, msg.RecipientID, chunk, replyTo, i == 0); err != nil {
+		if i == 0 {
+			_, _ = t.bot.SendChatAction(ctx, &bot.SendChatActionParams{
+				ChatID: chatID,
+				Action: models.ChatActionTyping,
+			})
+		}
+
+		if err := SendHTML(ctx, t.bot, chatID, chunk, replyTo); err != nil {
 			return err
 		}
 
@@ -167,53 +283,39 @@ func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) er
 	return nil
 }
 
-// sendSingle sends a single message to Telegram with optional typing
-// indicator, Markdown formatting, and plain-text fallback.
-func (t *TelegramAdapter) sendSingle(ctx context.Context, recipientID, text, replyToID string, sendTyping bool) error {
-	chatID, err := strconv.ParseInt(recipientID, 10, 64)
-	if err != nil {
-		return fmt.Errorf("parsing recipient ID %q: %w", recipientID, err)
+func (t *TelegramAdapter) listenForResponses(ctx context.Context) {
+	if t.sessionMgr == nil {
+		return
 	}
 
-	if sendTyping {
-		_, typingErr := t.bot.SendChatAction(ctx, &bot.SendChatActionParams{
-			ChatID: chatID,
-			Action: models.ChatActionTyping,
-		})
-		if typingErr != nil {
-			slog.Warn("failed to send typing indicator", "chat_id", chatID, "error", typingErr)
-		}
-	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case resp := <-t.sessionMgr.ResponseCh():
+			t.sessionToChatMutex.RLock()
+			chatID, ok := t.sessionToChat[resp.SessionID]
+			t.sessionToChatMutex.RUnlock()
 
-	params := &bot.SendMessageParams{
-		ChatID:    chatID,
-		Text:      text,
-		ParseMode: models.ParseModeMarkdownV1,
-	}
-
-	if replyToID != "" {
-		id, err := strconv.Atoi(replyToID)
-		if err != nil {
-			return fmt.Errorf("parsing reply-to ID %q: %w", replyToID, err)
-		}
-		params.ReplyParameters = &models.ReplyParameters{
-			MessageID: id,
-		}
-	}
-
-	_, err = t.bot.SendMessage(ctx, params)
-	if err != nil {
-		if errors.Is(err, bot.ErrorBadRequest) {
-			slog.Warn("markdown parse failed, retrying as plain text", "chat_id", chatID)
-			params.ParseMode = ""
-			_, retryErr := t.bot.SendMessage(ctx, params)
-			if retryErr != nil {
-				return fmt.Errorf("sending message to %s: %w", recipientID, retryErr)
+			if !ok {
+				chatID = resp.SenderID
 			}
-			return nil
-		}
-		return fmt.Errorf("sending message to %s: %w", recipientID, err)
-	}
 
-	return nil
+			if chatID == "" {
+				continue
+			}
+
+			_ = t.Send(ctx, core.OutboundMessage{
+				Channel:     "telegram",
+				RecipientID: chatID,
+				Content:     resp.Content,
+			})
+		}
+	}
+}
+
+func (t *TelegramAdapter) RegisterSessionChat(sessionID int64, chatID string) {
+	t.sessionToChatMutex.Lock()
+	defer t.sessionToChatMutex.Unlock()
+	t.sessionToChat[sessionID] = chatID
 }
