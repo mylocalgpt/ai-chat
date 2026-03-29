@@ -118,7 +118,7 @@ func TestShutdownStdioBackgroundCancelsBeforeWait(t *testing.T) {
 				t.Fatal("wait started before cancel")
 			}
 		},
-	}, nil)
+	})
 }
 
 type waitRecorder struct {

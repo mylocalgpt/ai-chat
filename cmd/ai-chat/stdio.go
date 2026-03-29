@@ -57,7 +57,6 @@ func runStdio() {
 	}
 
 	var opts []mcppkg.Option
-	var tg *telegram.TelegramAdapter
 
 	tmx := executor.NewTmux()
 	registry := executor.NewHarnessRegistry(tmx)
@@ -67,13 +66,12 @@ func runStdio() {
 	opts = append(opts, mcppkg.WithSessionManager(sessionMgr))
 
 	if cfg.Telegram.BotToken != "" {
-		tg, err = telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
+		tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
 			BotToken:     cfg.Telegram.BotToken,
 			AllowedUsers: cfg.Telegram.AllowedUsers,
 		}, st)
 		if err != nil {
 			slog.Warn("telegram adapter unavailable for MCP, continuing without it", "error", err)
-			tg = nil
 		} else {
 			opts = append(opts, mcppkg.WithNotifier(tg))
 			opts = append(opts, mcppkg.WithChannelAdapter(tg))
@@ -83,31 +81,18 @@ func runStdio() {
 	srv := mcppkg.NewServer(st, mcpCfg, opts...)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	var backgroundWG interface{ Wait() }
-	if tg != nil {
-		backgroundWG = app.StartBackground(ctx, st, manager, tg)
-		if err := tg.Start(ctx); err != nil {
-			slog.Error("failed to start telegram adapter", "error", err)
-			shutdownStdioBackground(cancel, backgroundWG, nil)
-			os.Exit(1)
-		}
-	} else {
-		backgroundWG = app.StartManagerBackground(ctx, manager)
-	}
+	backgroundWG := app.StartManagerBackground(ctx, manager)
 
 	err = srv.Run(ctx)
-	shutdownStdioBackground(cancel, backgroundWG, tg)
+	shutdownStdioBackground(cancel, backgroundWG)
 	if err != nil {
 		slog.Error("mcp server exited with error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func shutdownStdioBackground(cancel context.CancelFunc, backgroundWG interface{ Wait() }, tg interface{ Stop() error }) {
+func shutdownStdioBackground(cancel context.CancelFunc, backgroundWG interface{ Wait() }) {
 	cancel()
-	if tg != nil {
-		_ = tg.Stop()
-	}
 	if backgroundWG != nil {
 		backgroundWG.Wait()
 	}
