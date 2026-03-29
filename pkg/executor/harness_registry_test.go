@@ -5,9 +5,9 @@ import (
 )
 
 func TestRegistryGetAdapter(t *testing.T) {
-	r := NewHarnessRegistry(NewTmux())
+	r := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 
-	for _, agent := range []string{"opencode", "copilot"} {
+	for _, agent := range []string{"opencode", "opencode-tmux", "copilot"} {
 		a, err := r.GetAdapter(agent)
 		if err != nil {
 			t.Errorf("GetAdapter(%q) unexpected error: %v", agent, err)
@@ -24,13 +24,14 @@ func TestRegistryGetAdapter(t *testing.T) {
 }
 
 func TestRegistryIsAdapter(t *testing.T) {
-	r := NewHarnessRegistry(NewTmux())
+	r := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 
 	tests := []struct {
 		agent string
 		want  bool
 	}{
 		{"opencode", true},
+		{"opencode-tmux", true},
 		{"copilot", true},
 		{"unknown", false},
 	}
@@ -45,10 +46,10 @@ func TestRegistryIsAdapter(t *testing.T) {
 }
 
 func TestRegistryKnownAgents(t *testing.T) {
-	r := NewHarnessRegistry(NewTmux())
+	r := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	agents := r.KnownAgents()
 
-	want := []string{"copilot", "opencode"}
+	want := []string{"copilot", "opencode", "opencode-tmux"}
 	if len(agents) != len(want) {
 		t.Fatalf("KnownAgents() = %v, want %v", agents, want)
 	}

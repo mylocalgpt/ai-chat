@@ -57,7 +57,7 @@ func runTelegramAcceptance(configPath string) error {
 	}
 
 	registry := &acceptanceRegistry{mock: testingMockAdapter()}
-	runtime := app.NewRuntime(st, registry, app.RuntimeConfig{
+	runtime := app.NewRuntimeWithRegistry(st, registry, app.RuntimeConfig{
 		ResponsesDir:    responsesDir,
 		SoftIdleTimeout: 30 * time.Minute,
 		HardIdleTimeout: 2 * time.Hour,

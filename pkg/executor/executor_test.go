@@ -105,7 +105,7 @@ func (m *mockStore) ListSessions(_ context.Context) ([]core.Session, error) {
 }
 
 func TestExecuteRemoteWorkspaceReturnsError(t *testing.T) {
-	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux()), "")
+	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy()), "")
 
 	ws := core.Workspace{ID: 1, Name: "remote-proj", Path: "/tmp", Host: "mac"}
 	_, err := exec.Execute(context.Background(), ws, "opencode", "hello")
@@ -124,7 +124,7 @@ func TestSessionInfoEnrichment(t *testing.T) {
 		{ID: 2, WorkspaceID: 2, Agent: "opencode", Slug: "c3d4", TmuxSession: "ai-chat-old-c3d4", Status: string(core.SessionCrashed)},
 	}
 
-	exec := NewExecutor(st, tmx, NewHarnessRegistry(NewTmux()), "")
+	exec := NewExecutor(st, tmx, NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy()), "")
 	infos, err := exec.ListSessions(context.Background())
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
@@ -143,7 +143,7 @@ func TestSessionInfoEnrichment(t *testing.T) {
 }
 
 func TestKillSessionNoActiveSession(t *testing.T) {
-	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux()), "")
+	exec := NewExecutor(newMockStore(), newMockTmux(), NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy()), "")
 
 	err := exec.KillSession(context.Background(), 999, "opencode")
 	if err != nil {
@@ -203,7 +203,7 @@ func (m *mockAdapter) Stop(_ context.Context, _ core.SessionInfo) error {
 func TestExecuteAdapterPath(t *testing.T) {
 	tmx := newMockTmux()
 	st := newMockStore()
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	adapter := &mockAdapter{name: "test-adapter", alive: true}
 	reg.RegisterAdapter("test-adapter", adapter)
 
@@ -237,7 +237,7 @@ func TestExecuteAdapterPath(t *testing.T) {
 func TestExecuteAdapterReusesSession(t *testing.T) {
 	tmx := newMockTmux()
 	st := newMockStore()
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	adapter := &mockAdapter{name: "test-adapter", alive: true}
 	reg.RegisterAdapter("test-adapter", adapter)
 
@@ -270,7 +270,7 @@ func TestExecuteAdapterReusesSession(t *testing.T) {
 func TestExecuteAdapterRespawnsDeadSession(t *testing.T) {
 	tmx := newMockTmux()
 	st := newMockStore()
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	adapter := &mockAdapter{name: "test-adapter", alive: true}
 	reg.RegisterAdapter("test-adapter", adapter)
 
@@ -300,7 +300,7 @@ func TestExecuteAdapterRespawnsDeadSession(t *testing.T) {
 func TestExecuteDoesNotPersistUndeliveredPrompt(t *testing.T) {
 	tmx := newMockTmux()
 	st := newMockStore()
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	adapter := &mockAdapter{name: "test-adapter", alive: true, sendErr: errors.New("send failed")}
 	reg.RegisterAdapter("test-adapter", adapter)
 

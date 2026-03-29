@@ -9,12 +9,12 @@ type HarnessRegistry struct {
 	adapters map[string]AgentAdapter
 }
 
-func NewHarnessRegistry(tmux tmuxRunner) *HarnessRegistry {
+func NewHarnessRegistry(tmux TmuxRunner, serverMgr *ServerManager, proxy *SecurityProxy) *HarnessRegistry {
 	r := &HarnessRegistry{
 		adapters: make(map[string]AgentAdapter),
 	}
-	proxy := NewSecurityProxy()
-	r.adapters["opencode"] = NewOpenCodeTmuxAdapter(tmux, proxy)
+	r.adapters["opencode"] = NewOpenCodeServeAdapter(serverMgr)
+	r.adapters["opencode-tmux"] = NewOpenCodeTmuxAdapter(tmux, proxy)
 	r.adapters["copilot"] = NewCopilotAdapter(proxy)
 	return r
 }

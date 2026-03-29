@@ -47,7 +47,7 @@ func TestReconcileMarksCrashedSessions(t *testing.T) {
 
 	// No live tmux sessions.
 	tmx := newMockTmux()
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.ReconcileSessions(context.Background())
@@ -75,7 +75,7 @@ func TestReconcileKeepsAliveSessions(t *testing.T) {
 	tmx := newMockTmux()
 	tmx.sessions["ai-chat-proj-a1b2"] = true
 
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.ReconcileSessions(context.Background())
@@ -101,7 +101,7 @@ func TestReconcileCountsOrphans(t *testing.T) {
 	tmx := newMockTmux()
 	tmx.sessions["ai-chat-orphan-x1y2"] = true
 
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.ReconcileSessions(context.Background())
@@ -130,7 +130,7 @@ func TestCleanupKillsStale(t *testing.T) {
 	tmx := newMockTmux()
 	tmx.sessions["ai-chat-proj-a1b2"] = true
 
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.CleanupStaleSessions(context.Background(), 24*time.Hour)
@@ -169,7 +169,7 @@ func TestCleanupSkipsFresh(t *testing.T) {
 	tmx := newMockTmux()
 	tmx.sessions["ai-chat-proj-a1b2"] = true
 
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.CleanupStaleSessions(context.Background(), 24*time.Hour)
@@ -201,7 +201,7 @@ func TestCleanupFallsBackToStartedAt(t *testing.T) {
 	tmx := newMockTmux()
 	tmx.sessions["ai-chat-proj-a1b2"] = true
 
-	reg := NewHarnessRegistry(NewTmux())
+	reg := NewHarnessRegistry(NewTmux(), NewServerManager(), NewSecurityProxy())
 	exec := NewExecutor(st, tmx, reg, "")
 
 	result, err := exec.CleanupStaleSessions(context.Background(), 24*time.Hour)

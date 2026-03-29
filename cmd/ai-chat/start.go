@@ -82,7 +82,6 @@ func runStart(args []string) {
 
 	// Initialize executor components.
 	tmuxRunner := executor.NewTmux()
-	registry := executor.NewHarnessRegistry(tmuxRunner)
 
 	// Create response directory.
 	if err := os.MkdirAll(cfg.ResponsesDir, 0o755); err != nil {
@@ -90,7 +89,7 @@ func runStart(args []string) {
 		os.Exit(1)
 	}
 
-	runtime := app.NewRuntime(st, registry, app.RuntimeConfig{
+	runtime := app.NewRuntime(st, tmuxRunner, app.RuntimeConfig{
 		ResponsesDir:    cfg.ResponsesDir,
 		SoftIdleTimeout: 30 * time.Minute,
 		HardIdleTimeout: 2 * time.Hour,
@@ -129,6 +128,7 @@ func runStart(args []string) {
 
 	slog.Info("shutting down")
 	_ = tg.Stop()
+	runtime.Shutdown()
 	wg.Wait()
 	_ = st.Close()
 	_ = audit.CloseGlobal()

@@ -48,7 +48,7 @@ func TestStdioBackgroundForwardsSessionResponses(t *testing.T) {
 	if err := os.MkdirAll(responsesDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll responses: %v", err)
 	}
-	manager := session.NewManager(st, executor.NewHarnessRegistry(executor.NewTmux()), executor.NewSecurityProxy(), session.ManagerConfig{
+	manager := session.NewManager(st, executor.NewHarnessRegistry(executor.NewTmux(), executor.NewServerManager(), executor.NewSecurityProxy()), executor.NewSecurityProxy(), session.ManagerConfig{
 		ResponsesDir: responsesDir,
 	})
 	channel := &stdioTestChannel{msgCh: make(chan core.OutboundMessage, 1)}

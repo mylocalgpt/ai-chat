@@ -14,7 +14,7 @@ import (
 
 // OpenCodeTmuxAdapter implements AgentAdapter for OpenCode running in tmux.
 type OpenCodeTmuxAdapter struct {
-	tmux         tmuxRunner
+	tmux         TmuxRunner
 	pollInterval time.Duration
 	timeout      time.Duration
 	spawnTimeout time.Duration
@@ -22,7 +22,7 @@ type OpenCodeTmuxAdapter struct {
 }
 
 // NewOpenCodeTmuxAdapter returns a new OpenCode tmux adapter.
-func NewOpenCodeTmuxAdapter(tmux tmuxRunner, proxy *SecurityProxy) *OpenCodeTmuxAdapter {
+func NewOpenCodeTmuxAdapter(tmux TmuxRunner, proxy *SecurityProxy) *OpenCodeTmuxAdapter {
 	return &OpenCodeTmuxAdapter{
 		tmux:         tmux,
 		pollInterval: 1 * time.Second,

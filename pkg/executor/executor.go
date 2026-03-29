@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
@@ -13,7 +14,8 @@ import (
 
 var ErrRemoteNotSupported = errors.New("remote workspace execution not yet supported")
 
-type tmuxRunner interface {
+// TmuxRunner abstracts tmux operations for agent session management.
+type TmuxRunner interface {
 	NewSession(name, workDir string) error
 	HasSession(name string) bool
 	KillSession(name string) error
@@ -37,12 +39,12 @@ type SessionLiveInfo struct {
 
 type Executor struct {
 	store        sessionStore
-	tmux         tmuxRunner
+	tmux         TmuxRunner
 	registry     *HarnessRegistry
 	responsesDir string
 }
 
-func NewExecutor(store sessionStore, tmux tmuxRunner, registry *HarnessRegistry, responsesDir string) *Executor {
+func NewExecutor(store sessionStore, tmux TmuxRunner, registry *HarnessRegistry, responsesDir string) *Executor {
 	if responsesDir == "" {
 		responsesDir = DefaultResponseDir()
 	}
@@ -130,6 +132,11 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 
 	info := e.buildSessionInfo(ws, sess)
 
+	// Prefer streaming path when the adapter supports it.
+	if sa, ok := adapter.(StreamingAdapter); ok {
+		return e.executeStreaming(ctx, log, sess, info, sa, message)
+	}
+
 	if err := adapter.Send(ctx, info, message); err != nil {
 		return "", fmt.Errorf("executor: adapter send: %w", err)
 	}
@@ -152,6 +159,66 @@ func (e *Executor) executeAdapter(ctx context.Context, log *slog.Logger, ws core
 	}
 
 	return response, nil
+}
+
+// executeStreaming sends a message via a StreamingAdapter, drains the event
+// channel, writes both user and agent messages to the response file, and
+// returns the agent's response text.
+func (e *Executor) executeStreaming(ctx context.Context, log *slog.Logger, sess *core.Session, info core.SessionInfo, sa StreamingAdapter, message string) (string, error) {
+	ch, err := sa.SendStream(ctx, info, message)
+	if err != nil {
+		return "", fmt.Errorf("executor: streaming send: %w", err)
+	}
+
+	var finalText string
+	var deltaBuffer strings.Builder
+	for evt := range ch {
+		switch evt.Type {
+		case core.EventTextDelta:
+			deltaBuffer.WriteString(evt.Text)
+		case core.EventText:
+			finalText = evt.Text
+		case core.EventStepFinish:
+			if evt.Tokens != nil {
+				log.Info("step finished",
+					"session_id", sess.ID,
+					"input_tokens", evt.Tokens.Input,
+					"output_tokens", evt.Tokens.Output,
+					"cost", evt.Cost,
+					"reason", evt.Reason,
+				)
+			}
+		case core.EventError:
+			return "", fmt.Errorf("executor: agent error: %s", evt.Text)
+		}
+	}
+
+	if finalText == "" {
+		finalText = deltaBuffer.String()
+	}
+
+	if err := AppendMessage(info.ResponseFile, ResponseMessage{
+		Role:      "user",
+		Content:   message,
+		Timestamp: time.Now().UTC(),
+	}); err != nil {
+		return "", fmt.Errorf("executor: append user message: %w", err)
+	}
+	if finalText != "" {
+		if err := AppendMessage(info.ResponseFile, ResponseMessage{
+			Role:      "agent",
+			Content:   finalText,
+			Timestamp: time.Now().UTC(),
+		}); err != nil {
+			return "", fmt.Errorf("executor: append agent message: %w", err)
+		}
+	}
+
+	if err := e.store.TouchSession(ctx, sess.ID); err != nil {
+		log.Warn("failed to touch session", "error", err)
+	}
+
+	return finalText, nil
 }
 
 func (e *Executor) buildSessionInfo(ws core.Workspace, sess *core.Session) core.SessionInfo {
@@ -247,9 +314,21 @@ func (e *Executor) ListSessions(ctx context.Context) ([]SessionLiveInfo, error) 
 
 	infos := make([]SessionLiveInfo, len(sessions))
 	for i, sess := range sessions {
+		alive := false
+		if sess.TmuxSession != "" {
+			alive = e.tmux.HasSession(sess.TmuxSession)
+		} else if adapter, err := e.registry.GetAdapter(sess.Agent); err == nil {
+			info := core.SessionInfo{
+				Name:           sess.TmuxSession,
+				Slug:           sess.Slug,
+				Agent:          sess.Agent,
+				AgentSessionID: sess.AgentSessionID,
+			}
+			alive = adapter.IsAlive(info)
+		}
 		infos[i] = SessionLiveInfo{
 			Session: sess,
-			IsAlive: sess.TmuxSession != "" && e.tmux.HasSession(sess.TmuxSession),
+			IsAlive: alive,
 		}
 	}
 	return infos, nil

@@ -18,6 +18,8 @@ type Runtime struct {
 	Router         *router.Router
 	SessionManager *session.Manager
 	SecurityProxy  *executor.SecurityProxy
+	ServerManager  *executor.ServerManager
+	cancelReaper   context.CancelFunc
 }
 
 type RuntimeConfig struct {
@@ -31,7 +33,42 @@ type messageStore interface {
 	CreateMessage(ctx context.Context, msg *core.Message) error
 }
 
-func NewRuntime(st *store.Store, registry session.AdapterRegistry, cfg RuntimeConfig) *Runtime {
+func NewRuntime(st *store.Store, tmux executor.TmuxRunner, cfg RuntimeConfig) *Runtime {
+	proxy := executor.NewSecurityProxy()
+	serverMgr := executor.NewServerManager()
+	registry := executor.NewHarnessRegistry(tmux, serverMgr, proxy)
+	cancelReaper := serverMgr.StartReaper(time.Minute, 10*time.Minute)
+
+	manager := session.NewManager(st, registry, proxy, session.ManagerConfig{
+		ResponsesDir:    cfg.ResponsesDir,
+		SoftIdleTimeout: cfg.SoftIdleTimeout,
+		HardIdleTimeout: cfg.HardIdleTimeout,
+		ReaperInterval:  cfg.ReaperInterval,
+	})
+
+	return &Runtime{
+		Store:          st,
+		Router:         router.NewRouter(st, manager),
+		SessionManager: manager,
+		SecurityProxy:  proxy,
+		ServerManager:  serverMgr,
+		cancelReaper:   cancelReaper,
+	}
+}
+
+// Shutdown stops the server manager reaper and shuts down all managed servers.
+func (r *Runtime) Shutdown() {
+	if r.cancelReaper != nil {
+		r.cancelReaper()
+	}
+	if r.ServerManager != nil {
+		r.ServerManager.Shutdown()
+	}
+}
+
+// NewRuntimeWithRegistry creates a Runtime using a pre-built adapter registry.
+// This is intended for tests that need to inject mock adapters.
+func NewRuntimeWithRegistry(st *store.Store, registry session.AdapterRegistry, cfg RuntimeConfig) *Runtime {
 	proxy := executor.NewSecurityProxy()
 	manager := session.NewManager(st, registry, proxy, session.ManagerConfig{
 		ResponsesDir:    cfg.ResponsesDir,

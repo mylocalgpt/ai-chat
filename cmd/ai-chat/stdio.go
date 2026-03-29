@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/app"
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
@@ -59,8 +60,9 @@ func runStdio() {
 	var opts []mcppkg.Option
 
 	tmx := executor.NewTmux()
-	registry := executor.NewHarnessRegistry(tmx)
+	serverMgr := executor.NewServerManager()
 	proxy := executor.NewSecurityProxy()
+	registry := executor.NewHarnessRegistry(tmx, serverMgr, proxy)
 	manager := session.NewManager(st, registry, proxy, session.ManagerConfig{ResponsesDir: cfg.ResponsesDir})
 	sessionMgr := newExecutorSessionManager(manager, st)
 	opts = append(opts, mcppkg.WithSessionManager(sessionMgr))
@@ -81,10 +83,13 @@ func runStdio() {
 	srv := mcppkg.NewServer(st, mcpCfg, opts...)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	cancelReaper := serverMgr.StartReaper(time.Minute, 10*time.Minute)
 	backgroundWG := app.StartManagerBackground(ctx, manager)
 
 	err = srv.Run(ctx)
 	shutdownStdioBackground(cancel, backgroundWG)
+	cancelReaper()
+	serverMgr.Shutdown()
 	if err != nil {
 		slog.Error("mcp server exited with error", "error", err)
 		os.Exit(1)

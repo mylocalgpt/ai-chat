@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -368,6 +369,17 @@ func (m *Manager) createSessionLocked(ctx context.Context, workspaceID int64, ws
 		return nil, nil, fmt.Errorf("creating session record: %w", err)
 	}
 
+	// Persist the agent's own session ID if the adapter supports streaming.
+	if sa, ok := adapter.(executor.StreamingAdapter); ok {
+		if agentSessID := sa.GetAgentSessionID(*info); agentSessID != "" {
+			if err := m.store.UpdateAgentSessionID(ctx, sess.ID, agentSessID); err != nil {
+				slog.Warn("failed to persist agent session ID", "session_id", sess.ID, "error", err)
+			} else {
+				sess.AgentSessionID = agentSessID
+			}
+		}
+	}
+
 	info = m.buildSessionInfo(ws, sess)
 	return sess, info, nil
 }
@@ -680,6 +692,12 @@ func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info 
 	if err != nil {
 		return fmt.Errorf("getting adapter for agent %q: %w", sess.Agent, err)
 	}
+
+	// Prefer streaming path when the adapter supports it.
+	if sa, ok := adapter.(executor.StreamingAdapter); ok {
+		return m.dispatchStreaming(ctx, sess, info, sa, message)
+	}
+
 	if err := adapter.Send(ctx, *info, message); err != nil {
 		return fmt.Errorf("adapter send: %w", err)
 	}
@@ -689,6 +707,70 @@ func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info 
 		Timestamp: time.Now().UTC(),
 	}); err != nil {
 		return fmt.Errorf("append user message: %w", err)
+	}
+	if err := m.store.TouchSession(ctx, sess.ID); err != nil {
+		slog.Warn("failed to touch session", "session_id", sess.ID, "error", err)
+	}
+	return nil
+}
+
+// dispatchStreaming sends a message via a StreamingAdapter, drains the event
+// channel, and writes both the user message and agent response to the response
+// file. This differs from the non-streaming path where adapter.Send() writes
+// the agent message itself.
+func (m *Manager) dispatchStreaming(ctx context.Context, sess *core.Session, info *core.SessionInfo, sa executor.StreamingAdapter, message string) error {
+	ch, err := sa.SendStream(ctx, *info, message)
+	if err != nil {
+		return fmt.Errorf("streaming send: %w", err)
+	}
+
+	var finalText string
+	var deltaBuffer strings.Builder
+	for evt := range ch {
+		switch evt.Type {
+		case core.EventTextDelta:
+			deltaBuffer.WriteString(evt.Text)
+		case core.EventText:
+			// EventText is the authoritative final text snapshot;
+			// it overwrites any accumulated delta data.
+			finalText = evt.Text
+		case core.EventStepFinish:
+			if evt.Tokens != nil {
+				slog.Info("step finished",
+					"session_id", sess.ID,
+					"input_tokens", evt.Tokens.Input,
+					"output_tokens", evt.Tokens.Output,
+					"cost", evt.Cost,
+					"reason", evt.Reason,
+				)
+			}
+		case core.EventError:
+			return fmt.Errorf("agent error: %s", evt.Text)
+		}
+	}
+
+	// Use finalText from EventText if available, otherwise fall back to
+	// accumulated deltas.
+	if finalText == "" {
+		finalText = deltaBuffer.String()
+	}
+
+	// Write user message first, then agent response.
+	if err := executor.AppendMessage(info.ResponseFile, executor.ResponseMessage{
+		Role:      "user",
+		Content:   message,
+		Timestamp: time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("append user message: %w", err)
+	}
+	if finalText != "" {
+		if err := executor.AppendMessage(info.ResponseFile, executor.ResponseMessage{
+			Role:      "agent",
+			Content:   finalText,
+			Timestamp: time.Now().UTC(),
+		}); err != nil {
+			return fmt.Errorf("append agent message: %w", err)
+		}
 	}
 	if err := m.store.TouchSession(ctx, sess.ID); err != nil {
 		slog.Warn("failed to touch session", "session_id", sess.ID, "error", err)

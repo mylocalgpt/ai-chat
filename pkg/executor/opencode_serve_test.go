@@ -319,3 +319,79 @@ func TestOpenCodeServeAdapter_StopIsNoop(t *testing.T) {
 		t.Errorf("Stop() = %v, want nil", err)
 	}
 }
+
+func TestConsumeEvents_ContextCancellation(t *testing.T) {
+	// Simulate a streaming SSE connection that delivers a few events,
+	// then the context is cancelled (as would happen via AbortStream
+	// closing the HTTP request). The event channel should close cleanly.
+	sseInput := "event: session.status\ndata: {\"type\":\"busy\"}\n\nevent: message.part.delta\ndata: {\"field\":\"text\",\"delta\":\"Hello\"}\n\n"
+	stream := newSSEStream(sseInput)
+
+	// Use a body that we can track closure of.
+	respBody := io.NopCloser(strings.NewReader(""))
+
+	adapter := NewOpenCodeServeAdapter(nil)
+	ch := make(chan core.AgentEvent, 64)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		adapter.consumeEvents(ctx, stream, respBody, ch)
+	}()
+
+	// Read the events that arrive before the stream ends.
+	var events []core.AgentEvent
+	for evt := range ch {
+		events = append(events, evt)
+		// After getting some events, cancel context to simulate abort.
+		if len(events) >= 2 {
+			cancel()
+		}
+	}
+
+	// The SSE stream will exhaust (only 2 events), so consumeEvents returns
+	// via EOF. Either way, the channel must be closed.
+	if len(events) < 2 {
+		t.Errorf("expected at least 2 events, got %d", len(events))
+	}
+	if events[0].Type != core.EventBusy {
+		t.Errorf("first event type = %q, want %q", events[0].Type, core.EventBusy)
+	}
+	if events[1].Type != core.EventTextDelta || events[1].Text != "Hello" {
+		t.Errorf("second event = %+v, want TextDelta with 'Hello'", events[1])
+	}
+
+	// Ensure cancel is called to avoid leak.
+	cancel()
+}
+
+func TestConsumeEvents_StopsOnIdle(t *testing.T) {
+	// consumeEvents should stop after receiving EventIdle and not read
+	// any further events.
+	sseInput := "event: session.status\ndata: {\"type\":\"busy\"}\n\nevent: session.status\ndata: {\"type\":\"idle\"}\n\nevent: message.part.delta\ndata: {\"field\":\"text\",\"delta\":\"should not appear\"}\n\n"
+	stream := newSSEStream(sseInput)
+	respBody := io.NopCloser(strings.NewReader(""))
+
+	adapter := NewOpenCodeServeAdapter(nil)
+	ch := make(chan core.AgentEvent, 64)
+
+	go func() {
+		adapter.consumeEvents(context.Background(), stream, respBody, ch)
+	}()
+
+	var events []core.AgentEvent
+	for evt := range ch {
+		events = append(events, evt)
+	}
+
+	// Should get busy + idle, then stop. The third delta event should NOT appear.
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events (busy, idle), got %d: %+v", len(events), events)
+	}
+	if events[0].Type != core.EventBusy {
+		t.Errorf("first event type = %q, want %q", events[0].Type, core.EventBusy)
+	}
+	if events[1].Type != core.EventIdle {
+		t.Errorf("second event type = %q, want %q", events[1].Type, core.EventIdle)
+	}
+}

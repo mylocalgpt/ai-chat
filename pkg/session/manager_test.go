@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -802,5 +803,288 @@ func TestSendDoesNotPersistUndeliveredPrompt(t *testing.T) {
 	}
 	if len(rf.Messages) != 0 {
 		t.Fatalf("expected no persisted messages after failed send, got %+v", rf.Messages)
+	}
+}
+
+// mockStreamingAdapter implements both AgentAdapter and StreamingAdapter.
+type mockStreamingAdapter struct {
+	mockAdapter
+	agentSessionID string
+	events         []core.AgentEvent
+	sendStreamErr  error
+	abortCalled    bool
+}
+
+func (m *mockStreamingAdapter) SendStream(_ context.Context, _ core.SessionInfo, _ string) (<-chan core.AgentEvent, error) {
+	if m.sendStreamErr != nil {
+		return nil, m.sendStreamErr
+	}
+	ch := make(chan core.AgentEvent, len(m.events))
+	for _, evt := range m.events {
+		ch <- evt
+	}
+	close(ch)
+	return ch, nil
+}
+
+func (m *mockStreamingAdapter) AbortStream(_ context.Context, _ core.SessionInfo) error {
+	m.abortCalled = true
+	return nil
+}
+
+func (m *mockStreamingAdapter) GetAgentSessionID(_ core.SessionInfo) string {
+	id := m.agentSessionID
+	m.agentSessionID = "" // read-once semantics
+	return id
+}
+
+func TestDispatchStreaming_WritesResponseFile(t *testing.T) {
+	responsesDir := filepath.Join(t.TempDir(), "responses")
+	ws := &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()}
+	sess := &core.Session{
+		ID:          42,
+		WorkspaceID: 1,
+		Agent:       "opencode",
+		TmuxSession: "ai-chat-lab-s1t2",
+		Slug:        "s1t2",
+	}
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		workspace:       ws,
+		session:         sess,
+	}
+
+	events := []core.AgentEvent{
+		{Type: core.EventBusy},
+		{Type: core.EventStepStart},
+		{Type: core.EventTextDelta, Text: "Hello "},
+		{Type: core.EventTextDelta, Text: "world"},
+		{Type: core.EventText, Text: "Hello world"},
+		{Type: core.EventStepFinish, Tokens: &core.TokenUsage{Input: 100, Output: 50}, Cost: 0.01, Reason: "stop"},
+		{Type: core.EventIdle},
+	}
+	adapter := &mockStreamingAdapter{
+		mockAdapter: mockAdapter{name: "opencode", isAlive: true},
+		events:      events,
+	}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"opencode": adapter},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{ResponsesDir: responsesDir})
+	info := m.buildSessionInfo(ws, sess)
+	if _, err := executor.NewResponseFile(responsesDir, *info); err != nil {
+		t.Fatalf("creating response file: %v", err)
+	}
+
+	err := m.dispatchMessage(context.Background(), sess, info, "test message")
+	if err != nil {
+		t.Fatalf("dispatchMessage error: %v", err)
+	}
+
+	rf, err := executor.ReadResponseFile(info.ResponseFile)
+	if err != nil {
+		t.Fatalf("reading response file: %v", err)
+	}
+	if len(rf.Messages) != 2 {
+		t.Fatalf("expected 2 messages (user + agent), got %d: %+v", len(rf.Messages), rf.Messages)
+	}
+	if rf.Messages[0].Role != "user" || rf.Messages[0].Content != "test message" {
+		t.Errorf("unexpected user message: %+v", rf.Messages[0])
+	}
+	if rf.Messages[1].Role != "agent" || rf.Messages[1].Content != "Hello world" {
+		t.Errorf("unexpected agent message: %+v", rf.Messages[1])
+	}
+}
+
+func TestDispatchStreaming_DeltaFallback(t *testing.T) {
+	responsesDir := filepath.Join(t.TempDir(), "responses")
+	ws := &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()}
+	sess := &core.Session{
+		ID:          43,
+		WorkspaceID: 1,
+		Agent:       "opencode",
+		TmuxSession: "ai-chat-lab-d3e4",
+		Slug:        "d3e4",
+	}
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		workspace:       ws,
+		session:         sess,
+	}
+
+	// No EventText, only deltas.
+	events := []core.AgentEvent{
+		{Type: core.EventTextDelta, Text: "Only "},
+		{Type: core.EventTextDelta, Text: "deltas"},
+		{Type: core.EventIdle},
+	}
+	adapter := &mockStreamingAdapter{
+		mockAdapter: mockAdapter{name: "opencode", isAlive: true},
+		events:      events,
+	}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"opencode": adapter},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{ResponsesDir: responsesDir})
+	info := m.buildSessionInfo(ws, sess)
+	if _, err := executor.NewResponseFile(responsesDir, *info); err != nil {
+		t.Fatalf("creating response file: %v", err)
+	}
+
+	err := m.dispatchMessage(context.Background(), sess, info, "ping")
+	if err != nil {
+		t.Fatalf("dispatchMessage error: %v", err)
+	}
+
+	rf, err := executor.ReadResponseFile(info.ResponseFile)
+	if err != nil {
+		t.Fatalf("reading response file: %v", err)
+	}
+	if len(rf.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(rf.Messages))
+	}
+	if rf.Messages[1].Content != "Only deltas" {
+		t.Errorf("expected delta fallback text %q, got %q", "Only deltas", rf.Messages[1].Content)
+	}
+}
+
+func TestDispatchStreaming_ErrorEvent(t *testing.T) {
+	responsesDir := filepath.Join(t.TempDir(), "responses")
+	ws := &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()}
+	sess := &core.Session{
+		ID:          44,
+		WorkspaceID: 1,
+		Agent:       "opencode",
+		TmuxSession: "ai-chat-lab-e5f6",
+		Slug:        "e5f6",
+	}
+	store := &mockStore{
+		activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+		workspace:       ws,
+		session:         sess,
+	}
+
+	events := []core.AgentEvent{
+		{Type: core.EventTextDelta, Text: "partial"},
+		{Type: core.EventError, Text: "something went wrong"},
+	}
+	adapter := &mockStreamingAdapter{
+		mockAdapter: mockAdapter{name: "opencode", isAlive: true},
+		events:      events,
+	}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"opencode": adapter},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{ResponsesDir: responsesDir})
+	info := m.buildSessionInfo(ws, sess)
+	if _, err := executor.NewResponseFile(responsesDir, *info); err != nil {
+		t.Fatalf("creating response file: %v", err)
+	}
+
+	err := m.dispatchMessage(context.Background(), sess, info, "trigger error")
+	if err == nil {
+		t.Fatal("expected error from EventError")
+	}
+	if !strings.Contains(err.Error(), "something went wrong") {
+		t.Errorf("expected error to contain agent error text, got: %v", err)
+	}
+}
+
+// mockStoreTracking extends mockStore to track UpdateAgentSessionID calls.
+type mockStoreTracking struct {
+	mockStore
+	updatedAgentSessionIDs map[int64]string
+}
+
+func (m *mockStoreTracking) UpdateAgentSessionID(_ context.Context, id int64, agentSessionID string) error {
+	if m.updatedAgentSessionIDs == nil {
+		m.updatedAgentSessionIDs = make(map[int64]string)
+	}
+	m.updatedAgentSessionIDs[id] = agentSessionID
+	return nil
+}
+
+func TestCreateSessionLocked_PersistsAgentSessionID(t *testing.T) {
+	store := &mockStoreTracking{
+		mockStore: mockStore{
+			activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+			workspace:       &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()},
+			session:         &core.Session{ID: 55, WorkspaceID: 1, Agent: "opencode", TmuxSession: "ai-chat-lab-g7h8", Slug: "g7h8"},
+		},
+	}
+
+	adapter := &mockStreamingAdapter{
+		mockAdapter:    mockAdapter{name: "opencode", isAlive: true},
+		agentSessionID: "ses_test123",
+	}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"opencode": adapter},
+		agents:   []string{"opencode"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	sess, info, err := m.createSessionLocked(context.Background(), 1, store.workspace, "opencode")
+	if err != nil {
+		t.Fatalf("createSessionLocked error: %v", err)
+	}
+	if sess == nil || info == nil {
+		t.Fatal("expected session and info")
+	}
+
+	// Verify UpdateAgentSessionID was called.
+	storedID, ok := store.updatedAgentSessionIDs[55]
+	if !ok {
+		t.Fatal("expected UpdateAgentSessionID to be called")
+	}
+	if storedID != "ses_test123" {
+		t.Errorf("expected agent session ID %q, got %q", "ses_test123", storedID)
+	}
+
+	// Verify in-memory session has the ID.
+	if sess.AgentSessionID != "ses_test123" {
+		t.Errorf("expected in-memory AgentSessionID %q, got %q", "ses_test123", sess.AgentSessionID)
+	}
+
+	// Verify info also has it.
+	if info.AgentSessionID != "ses_test123" {
+		t.Errorf("expected info AgentSessionID %q, got %q", "ses_test123", info.AgentSessionID)
+	}
+}
+
+func TestCreateSessionLocked_NonStreamingAdapter_SkipsAgentSessionID(t *testing.T) {
+	store := &mockStoreTracking{
+		mockStore: mockStore{
+			activeWorkspace: &core.ActiveWorkspace{SenderID: "user1", Channel: "telegram", WorkspaceID: 1},
+			workspace:       &core.Workspace{ID: 1, Name: "lab", Path: t.TempDir()},
+			session:         &core.Session{ID: 66, WorkspaceID: 1, Agent: "copilot", TmuxSession: "ai-chat-lab-j9k0", Slug: "j9k0"},
+		},
+	}
+
+	adapter := &mockAdapter{name: "copilot", isAlive: true}
+	registry := &mockRegistry{
+		adapters: map[string]executor.AgentAdapter{"copilot": adapter},
+		agents:   []string{"copilot"},
+	}
+
+	m := NewManager(store, registry, nil, ManagerConfig{})
+
+	sess, _, err := m.createSessionLocked(context.Background(), 1, store.workspace, "copilot")
+	if err != nil {
+		t.Fatalf("createSessionLocked error: %v", err)
+	}
+
+	// Non-streaming adapter should NOT trigger UpdateAgentSessionID.
+	if len(store.updatedAgentSessionIDs) != 0 {
+		t.Errorf("expected no UpdateAgentSessionID calls, got %v", store.updatedAgentSessionIDs)
+	}
+	if sess.AgentSessionID != "" {
+		t.Errorf("expected empty AgentSessionID, got %q", sess.AgentSessionID)
 	}
 }

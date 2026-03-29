@@ -207,7 +207,7 @@ func newHarness(cfg HarnessConfig) (*TestHarness, func(), error) {
 		return nil, cleanup, fmt.Errorf("creating responses dir: %w", err)
 	}
 
-	runtime := app.NewRuntime(st, registry, app.RuntimeConfig{
+	runtime := app.NewRuntimeWithRegistry(st, registry, app.RuntimeConfig{
 		ResponsesDir:    responsesDir,
 		SoftIdleTimeout: 30 * time.Minute,
 		HardIdleTimeout: 2 * time.Hour,
