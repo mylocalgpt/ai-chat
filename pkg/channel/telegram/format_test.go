@@ -460,3 +460,154 @@ func TestWrapThinkingContent(t *testing.T) {
 		})
 	}
 }
+
+func TestConvertMarkdownToHTMLHeadingNewlines(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{
+			name:     "heading has leading newline",
+			input:    "# Heading",
+			contains: "\n<b>Heading</b>\n",
+		},
+		{
+			name:     "h2 heading has newlines",
+			input:    "## Sub Heading",
+			contains: "\n<b>Sub Heading</b>\n",
+		},
+		{
+			name:     "h3 heading has newlines",
+			input:    "### Third Level",
+			contains: "\n<b>Third Level</b>\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertMarkdownToHTML(tt.input)
+			if !strings.Contains(result, tt.contains) {
+				t.Errorf("result %q does not contain %q", result, tt.contains)
+			}
+		})
+	}
+}
+
+func TestConvertBlockquotes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "single line blockquote",
+			input: "&gt; quoted text",
+			want:  "<blockquote>quoted text</blockquote>",
+		},
+		{
+			name:  "multi-line blockquote merged",
+			input: "&gt; line one\n&gt; line two",
+			want:  "<blockquote>line one\nline two</blockquote>",
+		},
+		{
+			name:  "non-consecutive blockquotes produce separate tags",
+			input: "&gt; first\nnormal line\n&gt; second",
+			want:  "<blockquote>first</blockquote>\nnormal line\n<blockquote>second</blockquote>",
+		},
+		{
+			name:  "no space after &gt; still treated as blockquote",
+			input: "&gt;text without space",
+			want:  "<blockquote>text without space</blockquote>",
+		},
+		{
+			name:  "bare &gt; as empty quote line",
+			input: "&gt; first\n&gt;\n&gt; after empty",
+			want:  "<blockquote>first\n\nafter empty</blockquote>",
+		},
+		{
+			name:  "no blockquotes",
+			input: "just plain text",
+			want:  "just plain text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertBlockquotes(tt.input)
+			if result != tt.want {
+				t.Errorf("got %q, want %q", result, tt.want)
+			}
+		})
+	}
+}
+
+func TestConvertMarkdownToHTMLHeadingInsideBlockquote(t *testing.T) {
+	// After HTML escaping, "> # Title" becomes "&gt; # Title".
+	// The heading regex won't match because the line starts with "&gt;",
+	// so it passes through to blockquote processing as "# Title" content.
+	// Per the spec, this is acceptable behavior.
+	input := "&gt; # Title"
+	result := convertMarkdownToHTML(input)
+
+	if !strings.Contains(result, "<blockquote>") {
+		t.Errorf("expected blockquote tag, got %q", result)
+	}
+	if !strings.Contains(result, "# Title") {
+		t.Errorf("heading inside blockquote should retain # prefix, got %q", result)
+	}
+}
+
+func TestConvertMarkdownToHTMLHorizontalRule(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "three dashes", input: "---"},
+		{name: "three asterisks", input: "***"},
+		{name: "three underscores", input: "___"},
+		{name: "long dashes", input: "----------"},
+		{name: "dashes with trailing space", input: "---  "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertMarkdownToHTML(tt.input)
+			trimmed := strings.TrimSpace(result)
+			if trimmed != "" {
+				t.Errorf("horizontal rule should become empty, got %q", result)
+			}
+		})
+	}
+}
+
+func TestFormatHTMLHeadingBlockquotePipeline(t *testing.T) {
+	// Full pipeline test: heading, then blockquote, then heading
+	input := "# First Heading\n\n> This is quoted\n> Second quote line\n\n## Second Heading"
+	result := FormatHTML(input)
+
+	if !strings.Contains(result, "<b>First Heading</b>") {
+		t.Errorf("first heading not converted, got %q", result)
+	}
+	if !strings.Contains(result, "<blockquote>This is quoted\nSecond quote line</blockquote>") {
+		t.Errorf("multi-line blockquote not merged correctly, got %q", result)
+	}
+	if !strings.Contains(result, "<b>Second Heading</b>") {
+		t.Errorf("second heading not converted, got %q", result)
+	}
+}
+
+func TestFormatHTMLHorizontalRulePipeline(t *testing.T) {
+	input := "Above\n\n---\n\nBelow"
+	result := FormatHTML(input)
+
+	if strings.Contains(result, "---") {
+		t.Errorf("horizontal rule should be removed, got %q", result)
+	}
+	if !strings.Contains(result, "Above") {
+		t.Errorf("text above hr should be preserved, got %q", result)
+	}
+	if !strings.Contains(result, "Below") {
+		t.Errorf("text below hr should be preserved, got %q", result)
+	}
+}

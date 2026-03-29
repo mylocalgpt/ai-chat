@@ -79,6 +79,40 @@ func escapeHTML(text string) string {
 	return text
 }
 
+func convertBlockquotes(text string) string {
+	lines := strings.Split(text, "\n")
+	var result []string
+	var quoteLines []string
+
+	flushQuote := func() {
+		if len(quoteLines) > 0 {
+			result = append(result, "<blockquote>"+strings.Join(quoteLines, "\n")+"</blockquote>")
+			quoteLines = nil
+		}
+	}
+
+	quotePrefix := "&gt; "    // with space
+	quotePrefixBare := "&gt;" // bare (line is just ">")
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, quotePrefix) {
+			quoteLines = append(quoteLines, strings.TrimPrefix(trimmed, quotePrefix))
+		} else if trimmed == quotePrefixBare {
+			// Empty quote line (just ">"), keep as empty line in blockquote
+			quoteLines = append(quoteLines, "")
+		} else if strings.HasPrefix(trimmed, quotePrefixBare) {
+			// No space after &gt; (e.g., "&gt;text") - still a blockquote line
+			quoteLines = append(quoteLines, strings.TrimPrefix(trimmed, quotePrefixBare))
+		} else {
+			flushQuote()
+			result = append(result, line)
+		}
+	}
+	flushQuote()
+	return strings.Join(result, "\n")
+}
+
 func convertMarkdownToHTML(text string) string {
 	linkRegex := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	text = linkRegex.ReplaceAllString(text, `<a href="$2">$1</a>`)
@@ -107,10 +141,12 @@ func convertMarkdownToHTML(text string) string {
 	}
 
 	headingRegex := regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
-	text = headingRegex.ReplaceAllString(text, "<b>$1</b>")
+	text = headingRegex.ReplaceAllString(text, "\n<b>$1</b>\n")
 
-	blockquoteRegex := regexp.MustCompile(`(?m)^&gt;\s*(.+)$`)
-	text = blockquoteRegex.ReplaceAllString(text, "<blockquote>$1</blockquote>")
+	text = convertBlockquotes(text)
+
+	hrRegex := regexp.MustCompile(`(?m)^[\-\*_]{3,}\s*$`)
+	text = hrRegex.ReplaceAllString(text, "")
 
 	return text
 }
