@@ -12,21 +12,18 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/mylocalgpt/ai-chat/pkg/core"
-	"github.com/mylocalgpt/ai-chat/pkg/executor"
 )
 
 const pendingMessageExpiry = 5 * time.Minute
 
-type PendingMsg struct {
-	Msg       core.InboundMessage
-	Flags     []executor.SecurityFlag
-	ExpiresAt time.Time
-}
-
 type callbackHandler struct {
-	pendingMessages map[string]PendingMsg
+	pendingMessages map[string]pendingEntry
 	pendingMutex    sync.RWMutex
 	store           callbackStore
+}
+
+type pendingEntry struct {
+	expiresAt time.Time
 }
 
 type callbackStore interface {
@@ -36,7 +33,7 @@ type callbackStore interface {
 
 func newCallbackHandler(store callbackStore) *callbackHandler {
 	return &callbackHandler{
-		pendingMessages: make(map[string]PendingMsg),
+		pendingMessages: make(map[string]pendingEntry),
 		store:           store,
 	}
 }
@@ -146,87 +143,12 @@ func (h *callbackHandler) handleSessionCallback(ctx context.Context, b *bot.Bot,
 }
 
 func (h *callbackHandler) handleSecurityCallback(ctx context.Context, b *bot.Bot, chatID int64, messageID int, data string) {
-	parts := strings.SplitN(data, ":", 2)
-	if len(parts) < 2 {
-		slog.Warn("invalid security callback data", "data", data)
-		return
-	}
-
-	action := parts[0]
-	msgRef := parts[1]
-
-	h.pendingMutex.Lock()
-	pending, exists := h.pendingMessages[msgRef]
-	if exists {
-		if time.Now().After(pending.ExpiresAt) {
-			delete(h.pendingMessages, msgRef)
-			exists = false
-		}
-	}
-	if exists {
-		delete(h.pendingMessages, msgRef)
-	}
-	h.pendingMutex.Unlock()
-
-	if !exists {
-		_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
-			ChatID:    chatID,
-			MessageID: messageID,
-			Text:      "This action has expired. Please try again.",
-		})
-		return
-	}
-
-	switch action {
-	case "yes":
-		_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
-			ChatID:    chatID,
-			MessageID: messageID,
-			Text:      "Sent with warning.",
-		})
-		slog.Info("security warning accepted", "msg_ref", msgRef, "flags", len(pending.Flags))
-	case "no":
-		_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
-			ChatID:    chatID,
-			MessageID: messageID,
-			Text:      "Cancelled.",
-		})
-		slog.Info("security warning rejected", "msg_ref", msgRef)
-	}
-}
-
-func (h *callbackHandler) addPendingMessage(msgRef string, msg core.InboundMessage, flags []executor.SecurityFlag) {
-	h.pendingMutex.Lock()
-	defer h.pendingMutex.Unlock()
-
-	h.pendingMessages[msgRef] = PendingMsg{
-		Msg:       msg,
-		Flags:     flags,
-		ExpiresAt: time.Now().Add(pendingMessageExpiry),
-	}
-}
-
-func (h *callbackHandler) getPendingMessage(msgRef string) (PendingMsg, bool) {
-	h.pendingMutex.RLock()
-	defer h.pendingMutex.RUnlock()
-
-	pending, exists := h.pendingMessages[msgRef]
-	if !exists {
-		return PendingMsg{}, false
-	}
-
-	if time.Now().After(pending.ExpiresAt) {
-		return PendingMsg{}, false
-	}
-
-	return pending, true
-}
-
-func (h *callbackHandler) removePendingMessage(msgRef string) {
-	h.pendingMutex.Lock()
-	defer h.pendingMutex.Unlock()
-
-	delete(h.pendingMessages, msgRef)
+	_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Text:      "Security warnings are not yet implemented.",
+	})
+	slog.Warn("security callback received but feature not implemented", "data", data)
 }
 
 func (h *callbackHandler) cleanupExpired() {
@@ -235,7 +157,7 @@ func (h *callbackHandler) cleanupExpired() {
 
 	now := time.Now()
 	for ref, pending := range h.pendingMessages {
-		if now.After(pending.ExpiresAt) {
+		if now.After(pending.expiresAt) {
 			delete(h.pendingMessages, ref)
 		}
 	}

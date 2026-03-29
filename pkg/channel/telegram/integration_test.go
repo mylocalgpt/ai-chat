@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"testing"
-	"time"
 
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 )
@@ -173,55 +172,6 @@ func TestSecurityWarningKeyboardIntegration(t *testing.T) {
 	}
 	if row[1].CallbackData != "sec:no:"+msgRef {
 		t.Errorf("second button callback = %q, want 'sec:no:%s'", row[1].CallbackData, msgRef)
-	}
-}
-
-func TestCallbackHandlerPendingMessages(t *testing.T) {
-	h := newCallbackHandler(nil)
-
-	msgRef := "test-ref-123"
-	msg := core.InboundMessage{
-		ID:      "1",
-		Channel: "telegram",
-		Content: "test message with password",
-	}
-
-	h.addPendingMessage(msgRef, msg, nil)
-
-	pending, ok := h.getPendingMessage(msgRef)
-	if !ok {
-		t.Fatal("pending message not found")
-	}
-	if pending.Msg.Content != msg.Content {
-		t.Errorf("pending message content = %q, want %q", pending.Msg.Content, msg.Content)
-	}
-
-	h.removePendingMessage(msgRef)
-
-	_, ok = h.getPendingMessage(msgRef)
-	if ok {
-		t.Error("pending message should be removed")
-	}
-}
-
-func TestCallbackHandlerExpiry(t *testing.T) {
-	h := newCallbackHandler(nil)
-
-	msgRef := "test-expired"
-	msg := core.InboundMessage{Content: "test"}
-
-	h.addPendingMessage(msgRef, msg, nil)
-
-	h.pendingMutex.Lock()
-	if p, ok := h.pendingMessages[msgRef]; ok {
-		p.ExpiresAt = p.ExpiresAt.Add(-10 * time.Minute)
-		h.pendingMessages[msgRef] = p
-	}
-	h.pendingMutex.Unlock()
-
-	_, ok := h.getPendingMessage(msgRef)
-	if ok {
-		t.Error("expired message should not be returned")
 	}
 }
 

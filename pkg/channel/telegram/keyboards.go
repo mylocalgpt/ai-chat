@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-telegram/bot/models"
 	"github.com/mylocalgpt/ai-chat/pkg/core"
+	"github.com/mylocalgpt/ai-chat/pkg/executor"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
@@ -171,5 +172,9 @@ func formatAge(t time.Time) string {
 }
 
 func extractMessagesFromResponseFile(filePath string) (firstUser, lastAgent string) {
-	return "", ""
+	firstUser, lastAgent, err := executor.SessionPreview(filePath)
+	if err != nil {
+		return "", ""
+	}
+	return firstUser, lastAgent
 }
