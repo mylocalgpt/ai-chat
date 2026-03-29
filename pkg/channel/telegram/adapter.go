@@ -68,36 +68,6 @@ func (t *TelegramAdapter) SetRouter(r Router) {
 	t.callbackHandler.router = r
 }
 
-func (t *TelegramAdapter) SetMessageHandler(fn func(context.Context, core.InboundMessage)) {
-	t.router = &messageHandlerRouter{handler: fn}
-}
-
-type messageHandlerRouter struct {
-	handler func(context.Context, core.InboundMessage)
-}
-
-func (r *messageHandlerRouter) Route(ctx context.Context, req router.Request) (router.Result, error) {
-	if req.Message == nil {
-		return router.NoReplyResult(), nil
-	}
-	if r.handler != nil {
-		r.handler(ctx, *req.Message)
-	}
-	return router.NoReplyResult(), nil
-}
-
-func (r *messageHandlerRouter) HandleWorkspaceSelection(context.Context, string, string, int64) (router.Result, error) {
-	return router.NoReplyResult(), nil
-}
-
-func (r *messageHandlerRouter) HandleSessionSelection(context.Context, string, string, int64, int64) (router.Result, error) {
-	return router.NoReplyResult(), nil
-}
-
-func (r *messageHandlerRouter) HandleSecurityDecision(context.Context, string, string, string, bool) (router.Result, error) {
-	return router.NoReplyResult(), nil
-}
-
 func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message == nil {
 		return

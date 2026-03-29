@@ -19,8 +19,10 @@ type Config struct {
 
 // TelegramConfig holds Telegram bot credentials and access control.
 type TelegramConfig struct {
-	BotToken     string  `json:"bot_token"`
-	AllowedUsers []int64 `json:"allowed_users"`
+	BotToken           string  `json:"bot_token"`
+	AllowedUsers       []int64 `json:"allowed_users"`
+	AcceptanceBotToken string  `json:"acceptance_bot_token"`
+	AcceptanceChatID   int64   `json:"acceptance_chat_id"`
 }
 
 // Load reads and parses a JSON config file. If path is empty, it checks
@@ -151,11 +153,48 @@ func (c *Config) String() string {
 	b.WriteByte('\n')
 
 	fmt.Fprintf(&b, "telegram.allowed_users: %d user(s)\n", len(c.Telegram.AllowedUsers))
+	fmt.Fprintf(&b, "telegram.acceptance_bot_token: %s\n", redactSet(c.Telegram.AcceptanceBotToken))
+	fmt.Fprintf(&b, "telegram.acceptance_chat_id: %s\n", redactInt(c.Telegram.AcceptanceChatID))
 	fmt.Fprintf(&b, "db_path: %s\n", c.DBPath)
 	fmt.Fprintf(&b, "log_dir: %s\n", c.LogDir)
 	fmt.Fprintf(&b, "responses_dir: %s", c.ResponsesDir)
 
 	return b.String()
+}
+
+func (c *Config) TelegramAcceptance() (botToken string, chatID int64, err error) {
+	botToken = c.Telegram.AcceptanceBotToken
+	if botToken == "" {
+		botToken = c.Telegram.BotToken
+	}
+	if botToken == "" {
+		return "", 0, fmt.Errorf("telegram.acceptance_bot_token or telegram.bot_token is required")
+	}
+
+	chatID = c.Telegram.AcceptanceChatID
+	if chatID == 0 {
+		if len(c.Telegram.AllowedUsers) == 1 {
+			chatID = c.Telegram.AllowedUsers[0]
+		} else {
+			return "", 0, fmt.Errorf("telegram.acceptance_chat_id is required unless telegram.allowed_users has exactly one direct-chat user")
+		}
+	}
+
+	return botToken, chatID, nil
+}
+
+func redactSet(value string) string {
+	if value == "" {
+		return "[not set]"
+	}
+	return "[set]"
+}
+
+func redactInt(value int64) string {
+	if value == 0 {
+		return "[not set]"
+	}
+	return "[set]"
 }
 
 // resolveConfigPath returns the config file path to use. If an explicit path

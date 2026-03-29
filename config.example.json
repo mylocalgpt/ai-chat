@@ -1,8 +1,12 @@
 {
   "telegram": {
     "bot_token": "your-telegram-bot-token",
-    "allowed_users": [123456789]
+    "allowed_users": [123456789],
+    "acceptance_bot_token": "optional-separate-telegram-bot-token",
+    "acceptance_chat_id": 123456789
   },
   "db_path": "~/.config/ai-chat/state.db",
-  "log_dir": "~/.config/ai-chat/logs/"
+  "log_dir": "~/.config/ai-chat/logs/",
+  "log_retain_days": 30,
+  "responses_dir": "~/.config/ai-chat/responses/"
 }

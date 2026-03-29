@@ -10,12 +10,15 @@ import (
 	"unicode/utf8"
 
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
+	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
+	"github.com/mylocalgpt/ai-chat/pkg/router"
 )
 
 type Scenario struct {
-	Name string
-	Run  func(t T, h *TestHarness)
+	Name     string
+	Optional bool
+	Run      func(t T, h *TestHarness)
 }
 
 var Scenarios = []Scenario{
@@ -24,6 +27,21 @@ var Scenarios = []Scenario{
 	{Name: "Session lifecycle", Run: TestSessionLifecycle},
 	{Name: "Security proxy", Run: TestSecurityProxy},
 	{Name: "Formatting", Run: TestFormatting},
+	{Name: "Session switching regression", Run: TestSessionSwitchingRegression},
+	{Name: "Workspace continuity regression", Run: TestWorkspaceContinuityRegression},
+	{Name: "Security confirmation regression", Run: TestSecurityConfirmationRegression},
+	{Name: "MCP session targeting regression", Run: TestMCPSessionTargetingRegression},
+	{Name: "telegram-acceptance", Optional: true, Run: TestTelegramAcceptance},
+}
+
+func DefaultScenarios() []Scenario {
+	defaults := make([]Scenario, 0, len(Scenarios))
+	for _, s := range Scenarios {
+		if !s.Optional {
+			defaults = append(defaults, s)
+		}
+	}
+	return defaults
 }
 
 func TestBasicFlow(t T, h *TestHarness) {
@@ -263,6 +281,35 @@ func TestSessionLifecycle(t T, h *TestHarness) {
 		}
 	})
 
+	t.Run("clear_preserves_agent", func(t T) {
+		if _, err := h.SendMessage(ctx, "test-sender", "/agent opencode"); err != nil {
+			t.Fatalf("setting agent: %v", err)
+		}
+		if _, err := h.SendMessage(ctx, "test-sender", "hello with opencode"); err != nil {
+			t.Fatalf("sending opencode message: %v", err)
+		}
+		before, err := h.ActiveSession(ctx, "test-sender", "test")
+		if err != nil {
+			t.Fatalf("getting active session before clear: %v", err)
+		}
+		if before.Agent != "opencode" {
+			t.Fatalf("expected active agent opencode before clear, got %q", before.Agent)
+		}
+		if _, err := h.SendMessage(ctx, "test-sender", "/clear"); err != nil {
+			t.Fatalf("clearing session: %v", err)
+		}
+		after, err := h.ActiveSession(ctx, "test-sender", "test")
+		if err != nil {
+			t.Fatalf("getting active session after clear: %v", err)
+		}
+		if after.ID == before.ID {
+			t.Fatal("expected /clear to create a new session")
+		}
+		if after.Agent != "opencode" {
+			t.Fatalf("expected /clear to preserve agent opencode, got %q", after.Agent)
+		}
+	})
+
 	t.Run("sessions_listed_with_previews", func(t T) {
 		resp, err := h.SendMessage(ctx, "test-sender", "/sessions")
 		if err != nil {
@@ -273,6 +320,189 @@ func TestSessionLifecycle(t T, h *TestHarness) {
 			t.Error("expected sessions to be listed")
 		}
 	})
+}
+
+func TestSessionSwitchingRegression(t T, h *TestHarness) {
+	ctx := context.Background()
+
+	ws, err := h.Store.GetWorkspace(ctx, "test-ws")
+	if err != nil {
+		t.Fatalf("getting default workspace: %v", err)
+	}
+	if _, err := h.SendMessage(ctx, "test-sender", "first session"); err != nil {
+		t.Fatalf("sending first message: %v", err)
+	}
+	first, err := h.ActiveSession(ctx, "test-sender", "test")
+	if err != nil {
+		t.Fatalf("getting first session: %v", err)
+	}
+	if _, err := h.SendMessage(ctx, "test-sender", "/new"); err != nil {
+		t.Fatalf("creating second session: %v", err)
+	}
+	second, err := h.ActiveSession(ctx, "test-sender", "test")
+	if err != nil {
+		t.Fatalf("getting second session: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Fatal("expected /new to activate a different session")
+	}
+	if _, err := h.Router.HandleSessionSelection(ctx, "test-sender", "test", ws.ID, first.ID); err != nil {
+		t.Fatalf("switching back to first session: %v", err)
+	}
+	active, err := h.ActiveSession(ctx, "test-sender", "test")
+	if err != nil {
+		t.Fatalf("getting active session after switch: %v", err)
+	}
+	if active.ID != first.ID {
+		t.Fatalf("expected session %d after switch, got %d", first.ID, active.ID)
+	}
+	responseFile, err := h.ResponseFileForActiveSession(ctx, "test-sender", "test")
+	if err != nil {
+		t.Fatalf("getting response file: %v", err)
+	}
+	if _, err := h.SendMessage(ctx, "test-sender", "back on first"); err != nil {
+		t.Fatalf("sending post-switch message: %v", err)
+	}
+	latest, err := executor.LatestAgentMessage(responseFile)
+	if err != nil {
+		t.Fatalf("reading first session response file: %v", err)
+	}
+	if latest != "Echo: back on first" {
+		t.Fatalf("expected response in switched session file, got %q", latest)
+	}
+}
+
+func TestWorkspaceContinuityRegression(t T, h *TestHarness) {
+	ctx := context.Background()
+	alpha, err := h.Store.GetWorkspace(ctx, "test-ws")
+	if err != nil {
+		t.Fatalf("getting default workspace: %v", err)
+	}
+	beta, err := h.CreateWorkspace(ctx, "beta")
+	if err != nil {
+		t.Fatalf("creating second workspace: %v", err)
+	}
+	if _, err := h.SendMessage(ctx, "test-sender", "alpha-one"); err != nil {
+		t.Fatalf("sending alpha message: %v", err)
+	}
+	alphaSession, err := h.ActiveSession(ctx, "test-sender", "test")
+	if err != nil {
+		t.Fatalf("getting alpha session: %v", err)
+	}
+	if _, err := h.Router.HandleWorkspaceSelection(ctx, "test-sender", "test", beta.ID); err != nil {
+		t.Fatalf("switching to beta: %v", err)
+	}
+	if _, err := h.SendMessage(ctx, "test-sender", "beta-one"); err != nil {
+		t.Fatalf("sending beta message: %v", err)
+	}
+	betaSession, err := h.ActiveSession(ctx, "test-sender", "test")
+	if err != nil {
+		t.Fatalf("getting beta session: %v", err)
+	}
+	if betaSession.WorkspaceID != beta.ID {
+		t.Fatalf("expected beta session to belong to workspace %d, got %d", beta.ID, betaSession.WorkspaceID)
+	}
+	if _, err := h.Router.HandleWorkspaceSelection(ctx, "test-sender", "test", alpha.ID); err != nil {
+		t.Fatalf("switching back to alpha: %v", err)
+	}
+	restored, err := h.ActiveSession(ctx, "test-sender", "test")
+	if err != nil {
+		t.Fatalf("getting restored alpha session: %v", err)
+	}
+	if restored.ID != alphaSession.ID {
+		t.Fatalf("expected workspace switch to restore alpha session %d, got %d", alphaSession.ID, restored.ID)
+	}
+}
+
+func TestSecurityConfirmationRegression(t T, h *TestHarness) {
+	ctx := context.Background()
+	baseline := h.Outbound.Count()
+	result, err := h.Router.Route(ctx, router.Request{Message: &core.InboundMessage{SenderID: "test-sender", Channel: "test", Content: "my password is hunter2"}})
+	if err != nil {
+		t.Fatalf("routing confirm-required message: %v", err)
+	}
+	if result.Kind != router.ResultSecurityConfirmation || result.SecurityConfirmation == nil {
+		t.Fatalf("expected security confirmation, got %#v", result)
+	}
+	if _, err := h.ApproveSecurity(ctx, "test-sender", result.SecurityConfirmation.Token, false); err != nil {
+		t.Fatalf("rejecting security confirmation: %v", err)
+	}
+	if h.Outbound.Count() != baseline {
+		t.Fatalf("expected cancelled security confirmation not to add outbound messages, count changed from %d to %d", baseline, h.Outbound.Count())
+	}
+
+	result, err = h.Router.Route(ctx, router.Request{Message: &core.InboundMessage{SenderID: "test-sender", Channel: "test", Content: "please use password reset flow"}})
+	if err != nil {
+		t.Fatalf("routing second confirm-required message: %v", err)
+	}
+	if result.Kind != router.ResultSecurityConfirmation || result.SecurityConfirmation == nil {
+		t.Fatalf("expected second security confirmation, got %#v", result)
+	}
+	responseFile, err := h.ResponseFileForActiveSession(ctx, "test-sender", "test")
+	if err != nil {
+		t.Fatalf("getting response file for approved message: %v", err)
+	}
+	before := h.Outbound.Count()
+	if _, err := h.ApproveSecurity(ctx, "test-sender", result.SecurityConfirmation.Token, true); err != nil {
+		t.Fatalf("approving security confirmation: %v", err)
+	}
+	content, err := h.Outbound.WaitForContent(context.Background(), before)
+	if err != nil {
+		t.Fatalf("waiting for approved outbound content: %v", err)
+	}
+	if content != "Response blocked because it may contain sensitive content." {
+		t.Fatalf("expected sanitized outbound response after approval, got %q", content)
+	}
+	latest, err := executor.LatestAgentMessage(responseFile)
+	if err != nil {
+		t.Fatalf("reading approved response file: %v", err)
+	}
+	if latest != "Echo: please use password reset flow" {
+		t.Fatalf("expected approved message to reach agent, got %q", latest)
+	}
+}
+
+func TestMCPSessionTargetingRegression(t T, h *TestHarness) {
+	ctx := context.Background()
+	alpha, err := h.Store.GetWorkspace(ctx, "test-ws")
+	if err != nil {
+		t.Fatalf("getting alpha workspace: %v", err)
+	}
+	beta, err := h.CreateWorkspace(ctx, "beta-mcp")
+	if err != nil {
+		t.Fatalf("creating beta workspace: %v", err)
+	}
+	alphaSession, err := h.MCP.CreateSession(ctx, *alpha, "mock")
+	if err != nil {
+		t.Fatalf("creating alpha session: %v", err)
+	}
+	betaSession, err := h.MCP.CreateSession(ctx, *beta, "mock")
+	if err != nil {
+		t.Fatalf("creating beta session: %v", err)
+	}
+	if _, err := h.MCP.SwitchSession(ctx, alpha.ID, alphaSession.ID); err != nil {
+		t.Fatalf("switching active MCP session: %v", err)
+	}
+	if err := h.MCP.Send(ctx, betaSession.ID, "ping"); err != nil {
+		t.Fatalf("sending to explicit beta session: %v", err)
+	}
+	betaFile := executor.ResponseFilePath(h.TempDir+"/responses", betaSession.TmuxSession)
+	betaLatest, err := executor.LatestAgentMessage(betaFile)
+	if err != nil {
+		t.Fatalf("reading beta response file: %v", err)
+	}
+	if betaLatest != "pong" {
+		t.Fatalf("expected explicit MCP send to target beta session, got %q", betaLatest)
+	}
+	alphaFile := executor.ResponseFilePath(h.TempDir+"/responses", alphaSession.TmuxSession)
+	alphaLatest, err := executor.LatestAgentMessage(alphaFile)
+	if err == nil && alphaLatest == "pong" {
+		t.Fatal("expected explicit MCP send not to land in active alpha session")
+	}
+}
+
+func TestTelegramAcceptance(t T, h *TestHarness) {
+	t.Fatal("telegram acceptance requires explicit runtime configuration and is only supported via `ai-chat test --scenario telegram-acceptance`")
 }
 
 func TestSecurityProxy(t T, h *TestHarness) {
@@ -455,7 +685,7 @@ func passFail(passed bool) string {
 
 func RunAllScenarios(t T, h *TestHarness) map[string]bool {
 	results := make(map[string]bool)
-	for _, s := range Scenarios {
+	for _, s := range DefaultScenarios() {
 		t.Run(strings.ToLower(strings.ReplaceAll(s.Name, " ", "_")), func(t T) {
 			s.Run(t, h)
 		})
@@ -469,7 +699,7 @@ func FormatReport(results map[string]bool, total time.Duration) string {
 	b.WriteString("ai-chat test results:\n")
 
 	passed := 0
-	for _, s := range Scenarios {
+	for _, s := range DefaultScenarios() {
 		status := "FAIL"
 		if results[s.Name] {
 			status = "PASS"
@@ -479,6 +709,6 @@ func FormatReport(results map[string]bool, total time.Duration) string {
 	}
 
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "%d/%d passed (%.1fs total)\n", passed, len(Scenarios), total.Seconds())
+	fmt.Fprintf(&b, "%d/%d passed (%.1fs total)\n", passed, len(DefaultScenarios()), total.Seconds())
 	return b.String()
 }

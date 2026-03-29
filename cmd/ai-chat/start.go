@@ -8,17 +8,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 
+	"github.com/mylocalgpt/ai-chat/pkg/app"
 	"github.com/mylocalgpt/ai-chat/pkg/audit"
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
-	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
-	"github.com/mylocalgpt/ai-chat/pkg/router"
-	"github.com/mylocalgpt/ai-chat/pkg/session"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
@@ -76,7 +73,6 @@ func runStart(args []string) {
 	// Initialize executor components.
 	tmuxRunner := executor.NewTmux()
 	registry := executor.NewHarnessRegistry(tmuxRunner)
-	securityProxy := executor.NewSecurityProxy()
 
 	// Create response directory.
 	if err := os.MkdirAll(cfg.ResponsesDir, 0o755); err != nil {
@@ -84,31 +80,16 @@ func runStart(args []string) {
 		os.Exit(1)
 	}
 
-	// Initialize session manager.
-	sessionCfg := session.ManagerConfig{
+	runtime := app.NewRuntime(st, registry, app.RuntimeConfig{
 		ResponsesDir:    cfg.ResponsesDir,
 		SoftIdleTimeout: 30 * time.Minute,
 		HardIdleTimeout: 2 * time.Hour,
 		ReaperInterval:  5 * time.Minute,
-	}
-	sessMgr := session.NewManager(st, registry, securityProxy, sessionCfg)
-
-	// Initialize slash command router.
-	cmdRouter := router.NewRouter(st, sessMgr)
+	})
 
 	// Signal handling for graceful shutdown.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-
-	// Start session manager in background.
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := sessMgr.Run(ctx); err != nil && err != ctx.Err() {
-			slog.Error("session manager error", "error", err)
-		}
-	}()
 
 	// Initialize Telegram adapter.
 	tg, err := telegram.NewTelegramAdapter(telegram.TelegramAdapterConfig{
@@ -121,29 +102,8 @@ func runStart(args []string) {
 	}
 
 	// Wire message handlers.
-	tg.SetRouter(cmdRouter)
-
-	// Consume response events from session manager and send to Telegram.
-	go func() {
-		for event := range sessMgr.ResponseCh() {
-			if err := tg.Send(ctx, core.OutboundMessage{
-				Channel:     event.Channel,
-				RecipientID: event.SenderID,
-				Content:     event.Content,
-			}); err != nil {
-				slog.Warn("failed to send response event", "error", err)
-			}
-			if err := st.CreateMessage(ctx, &core.Message{
-				Channel:   event.Channel,
-				SenderID:  event.SenderID,
-				Content:   event.Content,
-				Direction: core.OutboundDirection,
-				Status:    core.StatusDone,
-			}); err != nil {
-				slog.Warn("failed to persist response event", "error", err)
-			}
-		}
-	}()
+	tg.SetRouter(runtime.Router)
+	wg := app.StartBackground(ctx, st, runtime.SessionManager, tg)
 
 	// Start Telegram long polling.
 	if err := tg.Start(ctx); err != nil {

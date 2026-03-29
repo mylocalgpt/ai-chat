@@ -21,7 +21,9 @@ func validJSON() string {
 	return `{
 		"telegram": {
 			"bot_token": "test-token-123",
-			"allowed_users": [111, 222]
+			"allowed_users": [111, 222],
+			"acceptance_bot_token": "acceptance-token",
+			"acceptance_chat_id": 999
 		},
 		"db_path": "/tmp/test.db",
 		"log_dir": "/tmp/logs/",
@@ -45,6 +47,12 @@ func TestLoad(t *testing.T) {
 				}
 				if len(cfg.Telegram.AllowedUsers) != 2 {
 					t.Errorf("allowed_users len = %d, want 2", len(cfg.Telegram.AllowedUsers))
+				}
+				if cfg.Telegram.AcceptanceBotToken != "acceptance-token" {
+					t.Errorf("acceptance_bot_token = %q, want %q", cfg.Telegram.AcceptanceBotToken, "acceptance-token")
+				}
+				if cfg.Telegram.AcceptanceChatID != 999 {
+					t.Errorf("acceptance_chat_id = %d, want 999", cfg.Telegram.AcceptanceChatID)
 				}
 				if cfg.DBPath != "/tmp/test.db" {
 					t.Errorf("db_path = %q, want %q", cfg.DBPath, "/tmp/test.db")
@@ -159,8 +167,10 @@ func TestLoadMissingFile(t *testing.T) {
 func TestStringRedactsSecrets(t *testing.T) {
 	cfg := &Config{
 		Telegram: TelegramConfig{
-			BotToken:     "super-secret-token",
-			AllowedUsers: []int64{111, 222},
+			BotToken:           "super-secret-token",
+			AllowedUsers:       []int64{111, 222},
+			AcceptanceBotToken: "accept-secret-token",
+			AcceptanceChatID:   333,
 		},
 		DBPath:       "/home/user/.ai-chat/state.db",
 		LogDir:       "/home/user/.ai-chat/logs/",
@@ -171,6 +181,9 @@ func TestStringRedactsSecrets(t *testing.T) {
 
 	if strings.Contains(s, "super-secret-token") {
 		t.Error("String() should not contain the actual bot token")
+	}
+	if strings.Contains(s, "accept-secret-token") {
+		t.Error("String() should not contain the actual acceptance bot token")
 	}
 	if !strings.Contains(s, "[set]") {
 		t.Error("String() should contain [set] for populated secrets")
@@ -184,6 +197,44 @@ func TestStringRedactsSecrets(t *testing.T) {
 	if !strings.Contains(s, "/home/user/.ai-chat/responses/") {
 		t.Error("String() should show responses_dir")
 	}
+}
+
+func TestTelegramAcceptance(t *testing.T) {
+	t.Run("uses explicit acceptance overrides", func(t *testing.T) {
+		cfg := &Config{Telegram: TelegramConfig{BotToken: "primary", AcceptanceBotToken: "accept", AcceptanceChatID: 555, AllowedUsers: []int64{1, 2}}}
+		botToken, chatID, err := cfg.TelegramAcceptance()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if botToken != "accept" {
+			t.Fatalf("bot token = %q, want accept", botToken)
+		}
+		if chatID != 555 {
+			t.Fatalf("chat ID = %d, want 555", chatID)
+		}
+	})
+
+	t.Run("falls back to primary bot token and single allowed user", func(t *testing.T) {
+		cfg := &Config{Telegram: TelegramConfig{BotToken: "primary", AllowedUsers: []int64{42}}}
+		botToken, chatID, err := cfg.TelegramAcceptance()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if botToken != "primary" {
+			t.Fatalf("bot token = %q, want primary", botToken)
+		}
+		if chatID != 42 {
+			t.Fatalf("chat ID = %d, want 42", chatID)
+		}
+	})
+
+	t.Run("fails without usable chat target", func(t *testing.T) {
+		cfg := &Config{Telegram: TelegramConfig{BotToken: "primary", AllowedUsers: []int64{1, 2}}}
+		_, _, err := cfg.TelegramAcceptance()
+		if err == nil || !strings.Contains(err.Error(), "acceptance_chat_id") {
+			t.Fatalf("expected acceptance_chat_id error, got %v", err)
+		}
+	})
 }
 
 func TestStringNotSet(t *testing.T) {

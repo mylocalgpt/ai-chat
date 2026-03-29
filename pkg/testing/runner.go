@@ -1,19 +1,10 @@
 package testing
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/mylocalgpt/ai-chat/pkg/core"
-	"github.com/mylocalgpt/ai-chat/pkg/executor"
-	"github.com/mylocalgpt/ai-chat/pkg/router"
-	"github.com/mylocalgpt/ai-chat/pkg/session"
-	"github.com/mylocalgpt/ai-chat/pkg/store"
 )
 
 type TestRunner struct {
@@ -31,7 +22,7 @@ func NewTestRunner(verbose bool, scenario string) *TestRunner {
 func (r *TestRunner) Run() *TestReport {
 	report := NewTestReport(r.Verbose)
 
-	scenarios := Scenarios
+	scenarios := DefaultScenarios()
 	if r.Scenario != "" {
 		scenarios = nil
 		for _, s := range Scenarios {
@@ -66,7 +57,7 @@ func (r *TestRunner) Run() *TestReport {
 }
 
 func (r *TestRunner) runScenario(s Scenario) error {
-	harness, cleanup, err := NewStandaloneHarness()
+	harness, cleanup, err := newHarness(HarnessConfig{})
 	if err != nil {
 		return fmt.Errorf("creating harness: %w", err)
 	}
@@ -189,145 +180,4 @@ type T interface {
 	Logf(format string, args ...any)
 	TempDir() string
 	Run(name string, f func(T)) bool
-}
-
-func NewStandaloneHarness() (*TestHarness, func(), error) {
-	ctx := context.Background()
-
-	tempDir, err := os.MkdirTemp("", "ai-chat-test-*")
-	if err != nil {
-		return nil, nil, fmt.Errorf("creating temp dir: %w", err)
-	}
-
-	cleanup := func() {
-		_ = os.RemoveAll(tempDir)
-	}
-
-	dbPath := filepath.Join(tempDir, "test.db")
-	db, err := store.Open(dbPath)
-	if err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("opening database: %w", err)
-	}
-
-	if err := store.Migrate(db); err != nil {
-		_ = db.Close()
-		cleanup()
-		return nil, nil, fmt.Errorf("running migrations: %w", err)
-	}
-
-	st := store.New(db)
-
-	mock := NewMockAdapter("mock")
-
-	registry := &standaloneRegistry{mock: mock}
-
-	proxy := executor.NewSecurityProxy()
-
-	responsesDir := filepath.Join(tempDir, "responses")
-	if err := os.MkdirAll(responsesDir, 0o755); err != nil {
-		_ = db.Close()
-		cleanup()
-		return nil, nil, fmt.Errorf("creating responses dir: %w", err)
-	}
-
-	sessMgr := session.NewManager(st, registry, proxy, session.ManagerConfig{
-		ResponsesDir:    responsesDir,
-		SoftIdleTimeout: 30 * time.Minute,
-		HardIdleTimeout: 2 * time.Hour,
-		ReaperInterval:  5 * time.Minute,
-	})
-
-	r := router.NewRouter(st, sessMgr)
-
-	ws, err := st.CreateWorkspace(ctx, "test-ws", tempDir, "")
-	if err != nil {
-		_ = db.Close()
-		cleanup()
-		return nil, nil, fmt.Errorf("creating workspace: %w", err)
-	}
-
-	metadata, _ := json.Marshal(map[string]string{"default_agent": "mock"})
-	if err := st.UpdateWorkspaceMetadata(ctx, ws.ID, metadata); err != nil {
-		_ = db.Close()
-		cleanup()
-		return nil, nil, fmt.Errorf("updating workspace metadata: %w", err)
-	}
-
-	if err := st.SetActiveWorkspace(ctx, "test-sender", "test", ws.ID); err != nil {
-		_ = db.Close()
-		cleanup()
-		return nil, nil, fmt.Errorf("setting active workspace: %w", err)
-	}
-
-	harness := &TestHarness{
-		Store:      st,
-		Router:     r,
-		SessionMgr: sessMgr,
-		Mock:       mock,
-		TempDir:    tempDir,
-		DB:         db,
-		Proxy:      proxy,
-	}
-
-	return harness, func() {
-		harness.Cleanup()
-		cleanup()
-	}, nil
-}
-
-type standaloneRegistry struct {
-	mock *MockAdapter
-}
-
-func (r *standaloneRegistry) GetAdapter(agent string) (executor.AgentAdapter, error) {
-	if agent == r.mock.Name() {
-		return r.mock, nil
-	}
-	return nil, fmt.Errorf("unknown agent: %q", agent)
-}
-
-func (r *standaloneRegistry) KnownAgents() []string {
-	return []string{r.mock.Name()}
-}
-
-func (h *TestHarness) SendMessageStandalone(ctx context.Context, senderID, content string) (string, error) {
-	msg := core.InboundMessage{
-		SenderID: senderID,
-		Channel:  "test",
-		Content:  content,
-	}
-	result, err := h.Router.Route(ctx, router.Request{Message: &msg})
-	if err != nil {
-		return "", err
-	}
-
-	if rendered := renderResultForTest(result); rendered != "" {
-		return rendered, nil
-	}
-
-	active, err := h.Store.GetActiveWorkspace(ctx, senderID, "test")
-	if err != nil {
-		return "", nil
-	}
-
-	activeSession, err := h.Store.GetActiveSessionForWorkspace(ctx, senderID, "test", active.WorkspaceID)
-	if err != nil {
-		return "", nil
-	}
-
-	sess, err := h.Store.GetSessionByID(ctx, activeSession.SessionID)
-	if err != nil {
-		return "", nil
-	}
-
-	responsesDir := h.TempDir + "/responses"
-	responseFile := executor.ResponseFilePath(responsesDir, sess.TmuxSession)
-
-	content, err = executor.LatestAgentMessage(responseFile)
-	if err != nil {
-		return "", err
-	}
-
-	return content, nil
 }

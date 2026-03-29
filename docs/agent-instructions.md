@@ -11,7 +11,12 @@ When responding via ai-chat (Telegram bot), follow these guidelines for optimal 
 
 ## Formatting
 
-The Telegram adapter converts markdown to HTML:
+The Telegram adapter applies one formatting boundary before sending:
+
+- raw model text -> `FormatHTML` -> `SplitMessage` -> Telegram HTML send
+- Do not pre-convert output to HTML before it reaches the adapter
+
+Supported markdown-to-HTML conversions:
 
 - `**bold**` or `__bold__` → bold text
 - `*italic*` or `_italic_` → italic text
@@ -34,6 +39,12 @@ func main() {
 ````
 
 Long code blocks are automatically split across messages while preserving formatting.
+
+## Validation Notes
+
+- Keep normal replies concise, but multi-chunk formatting must still stay valid when responses are long
+- Security-sensitive content may require confirmation before it is sent to an agent
+- Flagged agent output may be replaced with a safety notice before user delivery
 
 ## Placement
 
