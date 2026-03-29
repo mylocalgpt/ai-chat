@@ -154,7 +154,7 @@ func FormatHTML(text string) string {
 	return text
 }
 
-func SendHTML(ctx context.Context, b *bot.Bot, chatID int64, text string, replyToID string) error {
+func SendHTML(ctx context.Context, b telegramBot, chatID int64, text string, replyToID string) error {
 	params := &bot.SendMessageParams{
 		ChatID:    chatID,
 		Text:      text,

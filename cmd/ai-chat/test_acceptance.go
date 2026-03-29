@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"github.com/mylocalgpt/ai-chat/pkg/app"
 	"github.com/mylocalgpt/ai-chat/pkg/channel/telegram"
 	"github.com/mylocalgpt/ai-chat/pkg/config"
 	"github.com/mylocalgpt/ai-chat/pkg/core"
 	"github.com/mylocalgpt/ai-chat/pkg/executor"
-	"github.com/mylocalgpt/ai-chat/pkg/router"
 	"github.com/mylocalgpt/ai-chat/pkg/store"
 	testingpkg "github.com/mylocalgpt/ai-chat/pkg/testing"
 )
@@ -66,16 +67,22 @@ func runTelegramAcceptance(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("creating telegram adapter: %w", err)
 	}
+	testBot := newAcceptanceTelegramBot(chatID)
+	adapter.SetBot(testBot)
 	adapter.SetRouter(runtime.Router)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	wg := app.StartBackground(ctx, st, runtime.SessionManager, adapter)
-	defer wg.Wait()
 	if err := adapter.Start(ctx); err != nil {
+		cancel()
+		wg.Wait()
 		return fmt.Errorf("starting telegram adapter: %w", err)
 	}
-	defer func() { _ = adapter.Stop() }()
+	defer func() {
+		_ = adapter.Stop()
+		cancel()
+		wg.Wait()
+	}()
 
 	metadata, _ := json.Marshal(map[string]string{"default_agent": "mock"})
 	ws, err := st.CreateWorkspace(ctx, "telegram-acceptance", tempDir, "")
@@ -102,7 +109,7 @@ func runTelegramAcceptance(configPath string) error {
 	}
 
 	for _, step := range steps {
-		if err := runtimeStep(ctx, runtime, st, senderID, step.content); err != nil {
+		if err := runtimeStep(ctx, adapter, testBot, senderID, chatID, step.content); err != nil {
 			return fmt.Errorf("%s: %w", step.name, err)
 		}
 		if err := step.assert(ctx, st, senderID); err != nil {
@@ -122,19 +129,34 @@ func runTelegramAcceptance(configPath string) error {
 	return nil
 }
 
-func runtimeStep(ctx context.Context, runtime *app.Runtime, st *store.Store, senderID, content string) error {
-	result, err := runtime.Router.Route(ctx, router.Request{Message: &core.InboundMessage{SenderID: senderID, Channel: "telegram", Content: content}})
-	if err != nil {
-		return err
+func runtimeStep(ctx context.Context, adapter *telegram.TelegramAdapter, testBot *acceptanceTelegramBot, _ string, chatID int64, content string) error {
+	beforeMessages := len(testBot.sentMessages)
+	adapter.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+		ID:   beforeMessages + 1,
+		Date: int(time.Now().Unix()),
+		From: &models.User{ID: chatID, FirstName: "Acceptance"},
+		Chat: models.Chat{ID: chatID},
+		Text: content,
+	}})
+	if len(testBot.sentMessages) == beforeMessages {
+		return nil
 	}
-	if result.Kind == router.ResultText && result.Text != "" {
-		if err := st.CreateMessage(ctx, &core.Message{Channel: "telegram", SenderID: senderID, Content: result.Text, Direction: core.OutboundDirection, Status: core.StatusDone}); err != nil {
-			return err
-		}
-	}
-	if result.Kind == router.ResultSecurityConfirmation && result.SecurityConfirmation != nil {
-		_, err := runtime.SessionManager.HandleSecurityDecision(ctx, senderID, "telegram", result.SecurityConfirmation.Token, true)
-		return err
+	last := testBot.sentMessages[len(testBot.sentMessages)-1]
+	if kb, ok := last.ReplyMarkup.(*models.InlineKeyboardMarkup); ok && len(kb.InlineKeyboard) > 0 && len(kb.InlineKeyboard[0]) > 0 {
+		callbackData := kb.InlineKeyboard[0][0].CallbackData
+		adapter.ProcessCallback(ctx, &models.Update{CallbackQuery: &models.CallbackQuery{
+			ID:   fmt.Sprintf("cb-%d", len(testBot.callbackAnswers)+1),
+			From: models.User{ID: chatID, FirstName: "Acceptance"},
+			Data: callbackData,
+			Message: models.MaybeInaccessibleMessage{
+				Type: models.MaybeInaccessibleMessageTypeMessage,
+				Message: &models.Message{
+					ID:   testBot.lastSentMessageID(),
+					Date: int(time.Now().Unix()),
+					Chat: models.Chat{ID: chatID},
+				},
+			},
+		}})
 	}
 	return nil
 }
@@ -211,4 +233,55 @@ func testingMockAdapter() executor.AgentAdapter {
 	adapter := testingpkg.NewMockAdapter("mock")
 	adapter.AddResponse("please use password reset flow", testingpkg.MockResponse{Content: "Echo: please use password reset flow"})
 	return adapter
+}
+
+type acceptanceTelegramBot struct {
+	chatID          int64
+	sentMessages    []*bot.SendMessageParams
+	editedMessages  []*bot.EditMessageTextParams
+	callbackAnswers []*bot.AnswerCallbackQueryParams
+	chatActions     []*bot.SendChatActionParams
+	commands        []*bot.SetMyCommandsParams
+	nextMessageID   int
+}
+
+func newAcceptanceTelegramBot(chatID int64) *acceptanceTelegramBot {
+	return &acceptanceTelegramBot{chatID: chatID, nextMessageID: 100}
+}
+
+func (b *acceptanceTelegramBot) GetMe(context.Context) (*models.User, error) {
+	return &models.User{ID: 1, Username: "acceptance-bot", IsBot: true}, nil
+}
+
+func (b *acceptanceTelegramBot) Start(context.Context) {}
+
+func (b *acceptanceTelegramBot) SendMessage(_ context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+	b.sentMessages = append(b.sentMessages, params)
+	msg := &models.Message{ID: b.nextMessageID, Chat: models.Chat{ID: b.chatID}, Text: params.Text}
+	b.nextMessageID++
+	return msg, nil
+}
+
+func (b *acceptanceTelegramBot) SendChatAction(_ context.Context, params *bot.SendChatActionParams) (bool, error) {
+	b.chatActions = append(b.chatActions, params)
+	return true, nil
+}
+
+func (b *acceptanceTelegramBot) SetMyCommands(_ context.Context, params *bot.SetMyCommandsParams) (bool, error) {
+	b.commands = append(b.commands, params)
+	return true, nil
+}
+
+func (b *acceptanceTelegramBot) AnswerCallbackQuery(_ context.Context, params *bot.AnswerCallbackQueryParams) (bool, error) {
+	b.callbackAnswers = append(b.callbackAnswers, params)
+	return true, nil
+}
+
+func (b *acceptanceTelegramBot) EditMessageText(_ context.Context, params *bot.EditMessageTextParams) (*models.Message, error) {
+	b.editedMessages = append(b.editedMessages, params)
+	return &models.Message{ID: params.MessageID, Chat: models.Chat{ID: b.chatID}, Text: params.Text}, nil
+}
+
+func (b *acceptanceTelegramBot) lastSentMessageID() int {
+	return b.nextMessageID - 1
 }

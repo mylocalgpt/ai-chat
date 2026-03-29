@@ -295,6 +295,10 @@ func (e *executorSessionManager) Send(ctx context.Context, sessionID int64, mess
 	return e.manager.SendToSession(ctx, "mcp", "system", sessionID, message)
 }
 
+func (e *executorSessionManager) ApproveSend(ctx context.Context, pendingID string, approved bool) (string, error) {
+	return e.manager.HandleSecurityDecision(ctx, "mcp", "system", pendingID, approved)
+}
+
 func (e *executorSessionManager) SwitchSession(ctx context.Context, workspaceID, sessionID int64) (*core.Session, error) {
 	if err := e.store.SetActiveWorkspace(ctx, "mcp", "system", workspaceID); err != nil {
 		return nil, err

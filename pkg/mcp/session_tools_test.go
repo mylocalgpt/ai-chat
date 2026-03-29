@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -17,6 +18,15 @@ type mockSessionManager struct {
 	clearCalls  []int64
 	sendCalls   []sendCall
 	switchCalls []struct{ workspaceID, sessionID int64 }
+	sendErr     error
+	approveText string
+	approveErr  error
+	approveArgs []approveCall
+}
+
+type approveCall struct {
+	pendingID string
+	approved  bool
 }
 
 type createCall struct {
@@ -46,7 +56,18 @@ func (m *mockSessionManager) KillSession(_ context.Context, sessionID int64) err
 
 func (m *mockSessionManager) Send(_ context.Context, sessionID int64, message string) error {
 	m.sendCalls = append(m.sendCalls, sendCall{sessionID: sessionID, message: message})
-	return nil
+	return m.sendErr
+}
+
+func (m *mockSessionManager) ApproveSend(_ context.Context, pendingID string, approved bool) (string, error) {
+	m.approveArgs = append(m.approveArgs, approveCall{pendingID: pendingID, approved: approved})
+	if m.approveErr != nil {
+		return "", m.approveErr
+	}
+	if m.approveText == "" {
+		return "Message approved and sent.", nil
+	}
+	return m.approveText, nil
 }
 
 func (m *mockSessionManager) SwitchSession(_ context.Context, workspaceID, sessionID int64) (*core.Session, error) {
@@ -235,6 +256,51 @@ func TestAgentSend(t *testing.T) {
 	}
 }
 
+func TestAgentSendReturnsStructuredConfirmation(t *testing.T) {
+	ms := newMockStore()
+	sm := &mockSessionManager{sendErr: &core.SecurityDecisionError{Decision: core.SecurityDecision{Action: core.SecurityActionConfirm, PendingID: "pending-123", Reason: "confirm it"}}}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
+
+	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-proj1-abc1"}}
+
+	res, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{SessionName: "abc1", Message: "my password is hunter2"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected MCP error result for confirmation")
+	}
+	payload, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured payload, got %T", res.StructuredContent)
+	}
+	if payload["status"] != "confirmation_required" || payload["pending_id"] != "pending-123" {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
+func TestAgentSendApproval(t *testing.T) {
+	ms := newMockStore()
+	sm := &mockSessionManager{approveText: "Message approved and sent."}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
+
+	res, _, err := srv.handleAgentSendApproval(context.Background(), &gomcp.CallToolRequest{}, AgentSendApprovalInput{PendingID: "pending-123", Approve: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sm.approveArgs) != 1 || sm.approveArgs[0].pendingID != "pending-123" || !sm.approveArgs[0].approved {
+		t.Fatalf("unexpected approve args: %+v", sm.approveArgs)
+	}
+	if res.IsError {
+		t.Fatal("did not expect MCP error result")
+	}
+	tc := res.Content[0].(*gomcp.TextContent)
+	if tc.Text != "Message approved and sent." {
+		t.Fatalf("unexpected text: %q", tc.Text)
+	}
+}
+
 func TestSessionSwitch(t *testing.T) {
 	ms := newMockStore()
 	sm := &mockSessionManager{}
@@ -292,6 +358,25 @@ func TestSessionNilSessionManager(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error for nil session manager")
+	}
+
+	_, _, err = srv.handleAgentSendApproval(context.Background(), &gomcp.CallToolRequest{}, AgentSendApprovalInput{PendingID: "pending-123", Approve: true})
+	if err == nil {
+		t.Error("expected error for nil session manager")
+	}
+}
+
+func TestAgentSendPropagatesUnexpectedError(t *testing.T) {
+	ms := newMockStore()
+	sm := &mockSessionManager{sendErr: errors.New("boom")}
+	srv := NewServer(ms, &MCPConfig{}, WithSessionManager(sm))
+
+	ms.workspaces["proj1"] = &core.Workspace{ID: 1, Name: "proj1", Path: "/tmp"}
+	ms.sessions = []core.Session{{ID: 10, WorkspaceID: 1, Agent: "opencode", Slug: "abc1", TmuxSession: "ai-chat-proj1-abc1"}}
+
+	_, _, err := srv.handleAgentSend(context.Background(), &gomcp.CallToolRequest{}, AgentSendInput{SessionName: "abc1", Message: "hello"})
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }
 

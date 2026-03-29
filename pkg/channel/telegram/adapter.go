@@ -17,6 +17,51 @@ import (
 
 var _ core.Channel = (*TelegramAdapter)(nil)
 
+type telegramBot interface {
+	GetMe(ctx context.Context) (*models.User, error)
+	Start(ctx context.Context)
+	SendMessage(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error)
+	SendChatAction(ctx context.Context, params *bot.SendChatActionParams) (bool, error)
+	SetMyCommands(ctx context.Context, params *bot.SetMyCommandsParams) (bool, error)
+}
+
+type telegramCallbackBot interface {
+	AnswerCallbackQuery(ctx context.Context, params *bot.AnswerCallbackQueryParams) (bool, error)
+	EditMessageText(ctx context.Context, params *bot.EditMessageTextParams) (*models.Message, error)
+}
+
+type liveTelegramBot struct {
+	inner *bot.Bot
+}
+
+func (b *liveTelegramBot) GetMe(ctx context.Context) (*models.User, error) {
+	return b.inner.GetMe(ctx)
+}
+
+func (b *liveTelegramBot) Start(ctx context.Context) {
+	b.inner.Start(ctx)
+}
+
+func (b *liveTelegramBot) SendMessage(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+	return b.inner.SendMessage(ctx, params)
+}
+
+func (b *liveTelegramBot) SendChatAction(ctx context.Context, params *bot.SendChatActionParams) (bool, error) {
+	return b.inner.SendChatAction(ctx, params)
+}
+
+func (b *liveTelegramBot) SetMyCommands(ctx context.Context, params *bot.SetMyCommandsParams) (bool, error) {
+	return b.inner.SetMyCommands(ctx, params)
+}
+
+func (b *liveTelegramBot) AnswerCallbackQuery(ctx context.Context, params *bot.AnswerCallbackQueryParams) (bool, error) {
+	return b.inner.AnswerCallbackQuery(ctx, params)
+}
+
+func (b *liveTelegramBot) EditMessageText(ctx context.Context, params *bot.EditMessageTextParams) (*models.Message, error) {
+	return b.inner.EditMessageText(ctx, params)
+}
+
 type Router interface {
 	Route(ctx context.Context, req router.Request) (router.Result, error)
 	HandleWorkspaceSelection(ctx context.Context, senderID, channel string, workspaceID int64) (router.Result, error)
@@ -30,7 +75,7 @@ type TelegramAdapterConfig struct {
 }
 
 type TelegramAdapter struct {
-	bot          *bot.Bot
+	bot          telegramBot
 	allowedUsers map[int64]bool
 	router       Router
 	store        *store.Store
@@ -56,9 +101,11 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 	if err != nil {
 		return nil, fmt.Errorf("creating telegram bot: %w", err)
 	}
-	adapter.bot = b
+	adapter.bot = &liveTelegramBot{inner: b}
 
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "", bot.MatchTypePrefix, adapter.callbackHandler.handleCallback)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "", bot.MatchTypePrefix, func(ctx context.Context, b *bot.Bot, update *models.Update) {
+		adapter.callbackHandler.handleCallback(ctx, &liveTelegramBot{inner: b}, update)
+	})
 
 	return adapter, nil
 }
@@ -66,6 +113,20 @@ func NewTelegramAdapter(cfg TelegramAdapterConfig, st *store.Store) (*TelegramAd
 func (t *TelegramAdapter) SetRouter(r Router) {
 	t.router = r
 	t.callbackHandler.router = r
+}
+
+func (t *TelegramAdapter) SetBot(b telegramBot) {
+	t.bot = b
+}
+
+func (t *TelegramAdapter) ProcessUpdate(ctx context.Context, update *models.Update) {
+	t.handleUpdate(ctx, nil, update)
+}
+
+func (t *TelegramAdapter) ProcessCallback(ctx context.Context, update *models.Update) {
+	if callbackBot, ok := t.bot.(telegramCallbackBot); ok {
+		t.callbackHandler.handleCallback(ctx, callbackBot, update)
+	}
 }
 
 func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {

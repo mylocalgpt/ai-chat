@@ -45,6 +45,11 @@ type AgentSendInput struct {
 	Message     string `json:"message" jsonschema:"Message to send to the agent"`
 }
 
+type AgentSendApprovalInput struct {
+	PendingID string `json:"pending_id" jsonschema:"Pending approval token returned by agent_send"`
+	Approve   bool   `json:"approve" jsonschema:"Whether to approve the pending send"`
+}
+
 type SessionSwitchInput struct {
 	Workspace string `json:"workspace" jsonschema:"Workspace name"`
 	Session   string `json:"session" jsonschema:"Session name or slug to switch to"`
@@ -75,6 +80,11 @@ func (s *Server) registerSessionTools() {
 		Name:        "agent_send",
 		Description: "Send a message to an agent session",
 	}, s.handleAgentSend)
+
+	gomcp.AddTool(s.inner, &gomcp.Tool{
+		Name:        "agent_send_approve",
+		Description: "Approve or reject a pending agent_send confirmation",
+	}, s.handleAgentSendApproval)
 
 	gomcp.AddTool(s.inner, &gomcp.Tool{
 		Name:        "session_switch",
@@ -220,10 +230,57 @@ func (s *Server) handleAgentSend(ctx context.Context, _ *gomcp.CallToolRequest, 
 	}
 
 	if err := s.sessionMgr.Send(ctx, sess.ID, input.Message); err != nil {
+		var decisionErr *core.SecurityDecisionError
+		if errors.As(err, &decisionErr) {
+			switch decisionErr.Decision.Action {
+			case core.SecurityActionConfirm:
+				payload := map[string]any{
+					"status":     "confirmation_required",
+					"pending_id": decisionErr.Decision.PendingID,
+					"reason":     decisionErr.Decision.Reason,
+				}
+				data, marshalErr := json.Marshal(payload)
+				if marshalErr != nil {
+					return nil, nil, fmt.Errorf("marshaling confirmation result: %w", marshalErr)
+				}
+				return &gomcp.CallToolResult{
+					Content:           []gomcp.Content{&gomcp.TextContent{Text: string(data)}},
+					StructuredContent: payload,
+					IsError:           true,
+				}, nil, nil
+			case core.SecurityActionBlock:
+				return &gomcp.CallToolResult{
+					Content: []gomcp.Content{&gomcp.TextContent{Text: decisionErr.Decision.Reason}},
+					StructuredContent: map[string]any{
+						"status": "blocked",
+						"reason": decisionErr.Decision.Reason,
+					},
+					IsError: true,
+				}, nil, nil
+			}
+		}
 		return nil, nil, fmt.Errorf("sending message: %w", err)
 	}
 
 	return textResult("Message sent to agent"), nil, nil
+}
+
+func (s *Server) handleAgentSendApproval(ctx context.Context, _ *gomcp.CallToolRequest, input AgentSendApprovalInput) (*gomcp.CallToolResult, any, error) {
+	if s.sessionMgr == nil {
+		return nil, nil, fmt.Errorf("session manager not available")
+	}
+	if input.PendingID == "" {
+		return nil, nil, fmt.Errorf("pending_id is required")
+	}
+	text, err := s.sessionMgr.ApproveSend(ctx, input.PendingID, input.Approve)
+	if err != nil {
+		return nil, nil, fmt.Errorf("handling approval: %w", err)
+	}
+	payload := map[string]any{"status": "completed", "message": text}
+	return &gomcp.CallToolResult{
+		Content:           []gomcp.Content{&gomcp.TextContent{Text: text}},
+		StructuredContent: payload,
+	}, nil, nil
 }
 
 func (s *Server) handleSessionSwitch(ctx context.Context, _ *gomcp.CallToolRequest, input SessionSwitchInput) (*gomcp.CallToolResult, any, error) {

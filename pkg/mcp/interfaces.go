@@ -12,6 +12,7 @@ type SessionManager interface {
 	ClearSession(ctx context.Context, sessionID int64) (*core.Session, error)
 	KillSession(ctx context.Context, sessionID int64) error
 	Send(ctx context.Context, sessionID int64, message string) error
+	ApproveSend(ctx context.Context, pendingID string, approved bool) (string, error)
 	SwitchSession(ctx context.Context, workspaceID, sessionID int64) (*core.Session, error)
 }
 

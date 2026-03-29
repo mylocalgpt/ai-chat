@@ -23,7 +23,7 @@ func newCallbackHandler(r Router, allowedUsers map[int64]bool) *callbackHandler 
 	}
 }
 
-func (h *callbackHandler) handleCallback(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *callbackHandler) handleCallback(ctx context.Context, b telegramCallbackBot, update *models.Update) {
 	if update.CallbackQuery == nil {
 		return
 	}
@@ -77,7 +77,7 @@ func (h *callbackHandler) handleCallback(ctx context.Context, b *bot.Bot, update
 	}
 }
 
-func (h *callbackHandler) handleWorkspaceCallback(ctx context.Context, b *bot.Bot, chatID int64, messageID int, data string) {
+func (h *callbackHandler) handleWorkspaceCallback(ctx context.Context, b telegramCallbackBot, chatID int64, messageID int, data string) {
 	if data == "none" || h.router == nil {
 		return
 	}
@@ -99,7 +99,7 @@ func (h *callbackHandler) handleWorkspaceCallback(ctx context.Context, b *bot.Bo
 	h.renderCallbackResult(ctx, b, chatID, messageID, result)
 }
 
-func (h *callbackHandler) handleSessionCallback(ctx context.Context, b *bot.Bot, chatID int64, messageID int, data string) {
+func (h *callbackHandler) handleSessionCallback(ctx context.Context, b telegramCallbackBot, chatID int64, messageID int, data string) {
 	if h.router == nil {
 		return
 	}
@@ -123,7 +123,7 @@ func (h *callbackHandler) handleSessionCallback(ctx context.Context, b *bot.Bot,
 	h.renderCallbackResult(ctx, b, chatID, messageID, result)
 }
 
-func (h *callbackHandler) handleSecurityCallback(ctx context.Context, b *bot.Bot, chatID int64, messageID int, data string) {
+func (h *callbackHandler) handleSecurityCallback(ctx context.Context, b telegramCallbackBot, chatID int64, messageID int, data string) {
 	if h.router == nil {
 		return
 	}
@@ -140,7 +140,7 @@ func (h *callbackHandler) handleSecurityCallback(ctx context.Context, b *bot.Bot
 	h.renderCallbackResult(ctx, b, chatID, messageID, result)
 }
 
-func (h *callbackHandler) renderCallbackResult(ctx context.Context, b *bot.Bot, chatID int64, messageID int, result router.Result) {
+func (h *callbackHandler) renderCallbackResult(ctx context.Context, b telegramCallbackBot, chatID int64, messageID int, result router.Result) {
 	text := result.Text
 	if result.Kind == router.ResultWorkspacePicker && result.WorkspacePicker != nil {
 		text = result.WorkspacePicker.Prompt
