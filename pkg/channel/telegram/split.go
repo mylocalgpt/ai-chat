@@ -369,16 +369,6 @@ var trackedTags = map[string]bool{
 	"blockquote": true,
 }
 
-// isInsideFenceRegion returns true if pos falls inside any fence region.
-func isInsideFenceRegion(pos int, regions []fenceRegion) bool {
-	for _, r := range regions {
-		if pos >= r.start && pos < r.end {
-			return true
-		}
-	}
-	return false
-}
-
 // scanTags scans HTML text for open/close tags, skipping positions inside fence regions.
 // Returns a tagStack with the currently open tags at the end of text.
 func scanTags(text string, regions []fenceRegion) tagStack {
@@ -394,7 +384,7 @@ func scanTags(text string, regions []fenceRegion) tagStack {
 		}
 
 		// Skip if inside a fence region.
-		if isInsideFenceRegion(i, regions) {
+		if isInCodeFence(i, regions) {
 			i++
 			continue
 		}

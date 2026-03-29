@@ -177,8 +177,8 @@ func TestSplitMessage(t *testing.T) {
 			}
 			if tt.checkMaxLen {
 				for i, chunk := range chunks {
-					if len(chunk) > tt.maxLen {
-						t.Errorf("chunk %d exceeds maxLen: %d > %d", i, len(chunk), tt.maxLen)
+					if len([]rune(chunk)) > tt.maxLen {
+						t.Errorf("chunk %d exceeds maxLen: %d runes > %d", i, len([]rune(chunk)), tt.maxLen)
 					}
 				}
 			}
@@ -227,8 +227,8 @@ func TestSplitMessageMultipleCodeBlocks(t *testing.T) {
 	}
 
 	for _, chunk := range chunks {
-		if len(chunk) > 100 {
-			t.Errorf("chunk exceeds maxLen: %d > 100", len(chunk))
+		if len([]rune(chunk)) > 100 {
+			t.Errorf("chunk exceeds maxLen: %d runes > 100", len([]rune(chunk)))
 		}
 	}
 }
@@ -304,8 +304,8 @@ func TestSplitMessageDefaultMaxLen(t *testing.T) {
 	}
 
 	for i, chunk := range chunks {
-		if len(chunk) > FormattedMaxLen {
-			t.Errorf("chunk %d exceeds FormattedMaxLen: %d > %d", i, len(chunk), FormattedMaxLen)
+		if len([]rune(chunk)) > FormattedMaxLen {
+			t.Errorf("chunk %d exceeds FormattedMaxLen: %d runes > %d", i, len([]rune(chunk)), FormattedMaxLen)
 		}
 	}
 }
@@ -961,4 +961,382 @@ func TestSplitMessageTagsAndCodeFence(t *testing.T) {
 			}
 		}
 	}
+}
+
+// hasBalancedHTMLTags checks that every tracked inline HTML tag has a matching close tag.
+// Code fence tags (pre, code) are checked separately via open/close count.
+func hasBalancedHTMLTags(s string) bool {
+	var stack []string
+	runes := []rune(s)
+	n := len(runes)
+	i := 0
+	for i < n {
+		if runes[i] != '<' {
+			i++
+			continue
+		}
+		if i+1 >= n {
+			break
+		}
+		isClose := runes[i+1] == '/'
+		end := -1
+		for j := i + 1; j < n; j++ {
+			if runes[j] == '>' {
+				end = j
+				break
+			}
+		}
+		if end == -1 {
+			break
+		}
+		var tagName string
+		if isClose {
+			tagName = strings.ToLower(strings.TrimSpace(string(runes[i+2 : end])))
+		} else {
+			nameEnd := end
+			for j := i + 1; j < end; j++ {
+				if runes[j] == ' ' {
+					nameEnd = j
+					break
+				}
+			}
+			tagName = strings.ToLower(strings.TrimSpace(string(runes[i+1 : nameEnd])))
+		}
+		// Only check tracked inline tags; fence tags (pre, code) are handled by the splitter
+		// at a higher level and individual chunks may legitimately have unmatched fence pairs.
+		if trackedTags[tagName] {
+			if isClose {
+				// Pop from stack (handle misnesting gracefully).
+				found := false
+				for k := len(stack) - 1; k >= 0; k-- {
+					if stack[k] == tagName {
+						stack = append(stack[:k], stack[k+1:]...)
+						found = true
+						break
+					}
+				}
+				if !found {
+					return false
+				}
+			} else {
+				stack = append(stack, tagName)
+			}
+		}
+		i = end + 1
+	}
+	return len(stack) == 0
+}
+
+func TestSplitMessageEndToEnd(t *testing.T) {
+	// Realistic long message with multiple features.
+	input := `<b>Introduction</b>
+
+This is a <b>bold</b> and <i>italic</i> paragraph with emoji 🎉 and CJK 日本語.
+
+<b>Code Examples</b>
+
+<pre><code class="language-go">func main() {
+	fmt.Println("Hello, World!")
+	for i := 0; i < 100; i++ {
+		fmt.Printf("iteration %d: processing data for the long running task\n", i)
+	}
+	// This is a long comment that adds more content to the code block
+	// to ensure it is large enough to require splitting across chunks
+	result := computeSomething(42, "parameter")
+	if result != nil {
+		handleResult(result)
+	}
+}</code></pre>
+
+Some text between code blocks with <b>formatting</b>.
+
+<pre><code class="language-python">def process_data(items):
+    """Process a list of items and return results."""
+    results = []
+    for item in items:
+        transformed = transform(item)
+        results.append(transformed)
+    return results
+
+class DataProcessor:
+    def __init__(self, config):
+        self.config = config
+    
+    def run(self):
+        data = self.load()
+        return self.process(data)
+</code></pre>
+
+<blockquote>This is a blockquote with some important information that the user should pay attention to.</blockquote>
+
+<b>Conclusion</b>
+
+Final paragraph with more emoji: 🚀🎨✨ and mixed content 中文テスト.`
+
+	maxLen := 500
+	chunks := SplitMessage(input, maxLen)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks for long multi-feature message, got %d", len(chunks))
+	}
+
+	// (a) All chunks under maxLen in rune count.
+	for i, chunk := range chunks {
+		runeLen := len([]rune(chunk))
+		if runeLen > maxLen {
+			t.Errorf("chunk %d exceeds maxLen: %d runes > %d", i, runeLen, maxLen)
+		}
+	}
+
+	// (b) No chunk has unbalanced HTML tags.
+	for i, chunk := range chunks {
+		if !hasBalancedHTMLTags(chunk) {
+			t.Errorf("chunk %d has unbalanced HTML tags: %q", i, chunk)
+		}
+	}
+
+	// (c) Code fences properly closed/reopened with language attribute.
+	// When splitting inside a fence, the splitter injects close tags at chunk end
+	// and reopens with the language-aware open tag at the next chunk start.
+	// Verify each chunk has balanced fence tags (every open has a close within the chunk).
+	for i, chunk := range chunks {
+		openCount := strings.Count(chunk, "<pre><code")
+		closeCount := strings.Count(chunk, "</code></pre>")
+		if openCount != closeCount {
+			t.Errorf("chunk %d has mismatched fence tags: %d opens, %d closes", i, openCount, closeCount)
+		}
+		// If a chunk reopens a Go fence, verify the language attribute is preserved.
+		if strings.Contains(chunk, `<pre><code class="language-go">`) {
+			// Good - language attribute preserved.
+		} else if strings.Contains(chunk, `<pre><code class="language-python">`) {
+			// Good - language attribute preserved.
+		} else if openCount > 0 && !strings.Contains(chunk, `<pre><code>`) {
+			// Has a fence open that is neither language-go, language-python, nor bare - unexpected.
+			t.Errorf("chunk %d has unexpected fence open tag", i)
+		}
+	}
+
+	// (d) Concatenating chunks and stripping all formatting tags recovers original text content.
+	combined := strings.Join(chunks, "")
+	// Strip HTML tags (only real tags starting with a letter or /) and compare raw text.
+	stripAllTags := func(s string) string {
+		var result strings.Builder
+		runes := []rune(s)
+		i := 0
+		for i < len(runes) {
+			if runes[i] == '<' && i+1 < len(runes) {
+				next := runes[i+1]
+				isTag := (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || next == '/'
+				if isTag {
+					// Skip to closing '>'.
+					j := i + 1
+					for j < len(runes) && runes[j] != '>' {
+						j++
+					}
+					if j < len(runes) {
+						i = j + 1
+					} else {
+						i = j
+					}
+					continue
+				}
+			}
+			result.WriteRune(runes[i])
+			i++
+		}
+		return strings.Join(strings.Fields(result.String()), " ")
+	}
+
+	originalNorm := stripAllTags(input)
+	combinedNorm := stripAllTags(combined)
+	if originalNorm != combinedNorm {
+		maxShow := 200
+		if len(originalNorm) < maxShow {
+			maxShow = len(originalNorm)
+		}
+		t.Errorf("content not preserved after recombination.\nOriginal (normalized):  %q\nCombined (normalized): %q",
+			originalNorm[:maxShow], combinedNorm[:min(maxShow, len(combinedNorm))])
+	}
+}
+
+func TestSplitMessageAllCode(t *testing.T) {
+	// Single huge code block, maxLen 500.
+	openTag := `<pre><code class="language-go">`
+	closeTag := `</code></pre>`
+	codeContent := strings.Repeat("x", 2000)
+	input := openTag + codeContent + closeTag
+
+	maxLen := 500
+	chunks := SplitMessage(input, maxLen)
+
+	if len(chunks) < 3 {
+		t.Fatalf("expected at least 3 chunks for 2000-char code block at maxLen 500, got %d", len(chunks))
+	}
+
+	for i, chunk := range chunks {
+		runeLen := len([]rune(chunk))
+		if runeLen > maxLen {
+			t.Errorf("chunk %d exceeds maxLen: %d runes > %d", i, runeLen, maxLen)
+		}
+
+		// Every chunk should have properly paired fence tags.
+		if !strings.Contains(chunk, "<pre><code") {
+			t.Errorf("chunk %d missing opening fence tag", i)
+		}
+		if !strings.Contains(chunk, closeTag) {
+			t.Errorf("chunk %d missing closing fence tag", i)
+		}
+
+		// Verify language attribute is preserved in reopened fences.
+		if i > 0 {
+			if !strings.HasPrefix(chunk, openTag) {
+				t.Errorf("chunk %d should start with language-aware open tag %q, got prefix: %q",
+					i, openTag, chunk[:min(len(chunk), 50)])
+			}
+		}
+	}
+}
+
+func TestSplitMessageUnicodeWithFences(t *testing.T) {
+	// Text with CJK and emoji both inside and outside code fences.
+	cjkOutside := strings.Repeat("日本語", 50)  // 150 runes
+	emojiOutside := strings.Repeat("🚀🎨", 30) // 60 runes
+	cjkInside := strings.Repeat("中文代码", 40)  // 160 runes
+	emojiInside := strings.Repeat("✨💻", 30)  // 60 runes
+
+	input := cjkOutside + "\n\n" +
+		`<pre><code class="language-go">` + cjkInside + emojiInside + `</code></pre>` +
+		"\n\n" + emojiOutside
+
+	maxLen := 200
+	chunks := SplitMessage(input, maxLen)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	for i, chunk := range chunks {
+		runeLen := len([]rune(chunk))
+		if runeLen > maxLen {
+			t.Errorf("chunk %d exceeds maxLen: %d runes > %d", i, runeLen, maxLen)
+		}
+	}
+
+	// Verify fence tags are balanced across all chunks combined.
+	totalOpen := 0
+	totalClose := 0
+	for _, chunk := range chunks {
+		totalOpen += strings.Count(chunk, "<pre><code")
+		totalClose += strings.Count(chunk, "</code></pre>")
+	}
+	if totalOpen != totalClose {
+		t.Errorf("total fence tags unbalanced across chunks: %d opens, %d closes", totalOpen, totalClose)
+	}
+
+	// Verify content is preserved: all CJK/emoji runes appear somewhere.
+	combined := strings.Join(chunks, "")
+	for _, r := range cjkOutside {
+		if !strings.ContainsRune(combined, r) {
+			t.Errorf("CJK rune %q from outside text not found in output", string(r))
+			break
+		}
+	}
+	for _, r := range emojiOutside {
+		if !strings.ContainsRune(combined, r) {
+			t.Errorf("emoji rune %q from outside text not found in output", string(r))
+			break
+		}
+	}
+}
+
+func TestSplitMessageEmptyAndEdgeCases(t *testing.T) {
+	t.Run("empty string returns nil", func(t *testing.T) {
+		chunks := SplitMessage("", 100)
+		if chunks != nil {
+			t.Errorf("expected nil for empty string, got %v", chunks)
+		}
+	})
+
+	t.Run("single character returns single chunk", func(t *testing.T) {
+		chunks := SplitMessage("a", 100)
+		if len(chunks) != 1 || chunks[0] != "a" {
+			t.Errorf("expected [\"a\"], got %v", chunks)
+		}
+	})
+
+	t.Run("exactly at maxLen returns single chunk", func(t *testing.T) {
+		input := strings.Repeat("x", 100)
+		chunks := SplitMessage(input, 100)
+		if len(chunks) != 1 {
+			t.Errorf("expected 1 chunk at exact maxLen, got %d", len(chunks))
+		}
+	})
+
+	t.Run("one character over maxLen splits", func(t *testing.T) {
+		input := strings.Repeat("x", 101)
+		chunks := SplitMessage(input, 100)
+		if len(chunks) < 2 {
+			t.Errorf("expected at least 2 chunks for 101 chars at maxLen 100, got %d", len(chunks))
+		}
+	})
+
+	t.Run("all whitespace text", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("panicked on whitespace input: %v", r)
+			}
+		}()
+		input := strings.Repeat(" \n\t", 50)
+		chunks := SplitMessage(input, 100)
+		// Should not panic; result may vary but must be safe.
+		_ = chunks
+	})
+
+	t.Run("single unclosed tag", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("panicked on unclosed tag: %v", r)
+			}
+		}()
+		input := "<b>text without close" + strings.Repeat("x", 200)
+		chunks := SplitMessage(input, 100)
+		if len(chunks) < 2 {
+			t.Errorf("expected at least 2 chunks, got %d", len(chunks))
+		}
+		// The unclosed <b> should be tracked and closed/reopened across chunks.
+		for i, chunk := range chunks {
+			runeLen := len([]rune(chunk))
+			if runeLen > 100 {
+				t.Errorf("chunk %d exceeds maxLen: %d runes > 100", i, runeLen)
+			}
+		}
+	})
+
+	t.Run("no panics on various edge cases", func(t *testing.T) {
+		edgeCases := []string{
+			"",
+			"x",
+			"<",
+			">",
+			"<>",
+			"</>",
+			"<b>",
+			"</b>",
+			"<pre><code>",
+			"</code></pre>",
+			"<pre><code>unclosed",
+			strings.Repeat("🎉", 300),
+			"<b>" + strings.Repeat("日本語", 100) + "</b>",
+		}
+		for _, input := range edgeCases {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Errorf("panicked on input %q: %v", input[:min(len(input), 30)], r)
+					}
+				}()
+				_ = SplitMessage(input, 50)
+			}()
+		}
+	})
 }
