@@ -339,6 +339,9 @@ func SendHTML(ctx context.Context, b telegramBot, chatID int64, text string, rep
 		ChatID:    chatID,
 		Text:      text,
 		ParseMode: models.ParseModeHTML,
+		LinkPreviewOptions: &models.LinkPreviewOptions{
+			IsDisabled: bot.True(),
+		},
 	}
 
 	if replyToID != "" {
@@ -366,4 +369,30 @@ func SendHTML(ctx context.Context, b telegramBot, chatID int64, text string, rep
 	}
 
 	return nil
+}
+
+// formatNumber formats an integer with comma separators for thousands.
+func formatNumber(n int) string {
+	if n < 1000 {
+		return strconv.Itoa(n)
+	}
+	s := strconv.Itoa(n)
+	var result []byte
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
+	}
+	return string(result)
+}
+
+// formatTokenFooter returns an italic HTML footer with total token count and cost.
+// Returns empty string if both input and output tokens are zero.
+func formatTokenFooter(inputTokens, outputTokens int, cost float64) string {
+	if inputTokens == 0 && outputTokens == 0 {
+		return ""
+	}
+	total := inputTokens + outputTokens
+	return fmt.Sprintf("\n\n<i>%s tokens | $%.4f</i>", formatNumber(total), cost)
 }

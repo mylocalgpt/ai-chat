@@ -415,11 +415,14 @@ func (t *TelegramAdapter) SendResponse(ctx context.Context, params core.Response
 
 	// Short path: send directly via existing Send().
 	if contentLen <= shortThreshold {
-		// TODO: append token footer once Phase 5 provides formatTokenFooter
+		content := params.Content
+		if footer := formatTokenFooter(params.InputTokens, params.OutputTokens, params.Cost); footer != "" {
+			content += footer
+		}
 		return t.Send(ctx, core.OutboundMessage{
 			Channel:     "telegram",
 			RecipientID: strconv.FormatInt(params.ChatID, 10),
-			Content:     params.Content,
+			Content:     content,
 			ReplyToID:   params.ReplyToID,
 		})
 	}
@@ -473,7 +476,10 @@ func (t *TelegramAdapter) SendResponse(ctx context.Context, params core.Response
 		}
 	}
 
-	// TODO: append token footer once Phase 5 provides formatTokenFooter
+	// Append token footer to summary before sending.
+	if footer := formatTokenFooter(params.InputTokens, params.OutputTokens, params.Cost); footer != "" {
+		summary += footer
+	}
 
 	// Format and send summary with "Show full output" button.
 	formatted := FormatHTML(summary)

@@ -1,8 +1,12 @@
 package telegram
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 func TestExtractCodeBlocks(t *testing.T) {
@@ -820,5 +824,153 @@ func TestFormatHTMLTablePipeline(t *testing.T) {
 	// Separator should be gone
 	if strings.Contains(result, "| ---") {
 		t.Errorf("separator row should be removed, got %q", result)
+	}
+}
+
+func TestFormatNumber(t *testing.T) {
+	tests := []struct {
+		input int
+		want  string
+	}{
+		{0, "0"},
+		{1, "1"},
+		{999, "999"},
+		{1000, "1,000"},
+		{10000, "10,000"},
+		{100000, "100,000"},
+		{1000000, "1,000,000"},
+		{1234567, "1,234,567"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			got := formatNumber(tt.input)
+			if got != tt.want {
+				t.Errorf("formatNumber(%d) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatTokenFooter(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  int
+		output int
+		cost   float64
+		want   string
+	}{
+		{
+			name:   "typical usage",
+			input:  1500,
+			output: 500,
+			cost:   0.0123,
+			want:   "\n\n<i>2,000 tokens | $0.0123</i>",
+		},
+		{
+			name:   "small numbers",
+			input:  50,
+			output: 30,
+			cost:   0.0001,
+			want:   "\n\n<i>80 tokens | $0.0001</i>",
+		},
+		{
+			name:   "large numbers",
+			input:  75000,
+			output: 25000,
+			cost:   1.2345,
+			want:   "\n\n<i>100,000 tokens | $1.2345</i>",
+		},
+		{
+			name:   "zero cost",
+			input:  100,
+			output: 50,
+			cost:   0,
+			want:   "\n\n<i>150 tokens | $0.0000</i>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatTokenFooter(tt.input, tt.output, tt.cost)
+			if got != tt.want {
+				t.Errorf("formatTokenFooter(%d, %d, %f) = %q, want %q", tt.input, tt.output, tt.cost, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatTokenFooterZero(t *testing.T) {
+	got := formatTokenFooter(0, 0, 0)
+	if got != "" {
+		t.Errorf("formatTokenFooter(0, 0, 0) = %q, want empty string", got)
+	}
+
+	got = formatTokenFooter(0, 0, 0.05)
+	if got != "" {
+		t.Errorf("formatTokenFooter(0, 0, 0.05) = %q, want empty string even with non-zero cost", got)
+	}
+}
+
+// mockSendHTMLBot captures SendMessage params for verifying SendHTML behavior.
+type mockSendHTMLBot struct {
+	lastParams *bot.SendMessageParams
+}
+
+func (b *mockSendHTMLBot) GetMe(context.Context) (*models.User, error) {
+	return &models.User{ID: 1, IsBot: true}, nil
+}
+func (b *mockSendHTMLBot) Start(context.Context) {}
+func (b *mockSendHTMLBot) SendMessage(_ context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+	b.lastParams = params
+	return &models.Message{ID: 1, Chat: models.Chat{ID: params.ChatID.(int64)}}, nil
+}
+func (b *mockSendHTMLBot) SendChatAction(context.Context, *bot.SendChatActionParams) (bool, error) {
+	return true, nil
+}
+func (b *mockSendHTMLBot) SetMyCommands(context.Context, *bot.SetMyCommandsParams) (bool, error) {
+	return true, nil
+}
+func (b *mockSendHTMLBot) DeleteMessage(context.Context, *bot.DeleteMessageParams) (bool, error) {
+	return true, nil
+}
+func (b *mockSendHTMLBot) EditMessageText(_ context.Context, params *bot.EditMessageTextParams) (*models.Message, error) {
+	return &models.Message{ID: params.MessageID, Chat: models.Chat{ID: params.ChatID.(int64)}}, nil
+}
+func (b *mockSendHTMLBot) SendDocument(_ context.Context, params *bot.SendDocumentParams) (*models.Message, error) {
+	return &models.Message{ID: 1, Chat: models.Chat{ID: params.ChatID.(int64)}}, nil
+}
+
+func TestSendHTMLLinkPreview(t *testing.T) {
+	mb := &mockSendHTMLBot{}
+	err := SendHTML(context.Background(), mb, 123, "<b>Hello</b>", "")
+	if err != nil {
+		t.Fatalf("SendHTML() error = %v", err)
+	}
+
+	if mb.lastParams == nil {
+		t.Fatal("no SendMessage call recorded")
+	}
+
+	if mb.lastParams.LinkPreviewOptions == nil {
+		t.Fatal("LinkPreviewOptions should be set")
+	}
+	if mb.lastParams.LinkPreviewOptions.IsDisabled == nil || !*mb.lastParams.LinkPreviewOptions.IsDisabled {
+		t.Error("LinkPreviewOptions.IsDisabled should be true")
+	}
+}
+
+func TestSendHTMLLinkPreviewWithReply(t *testing.T) {
+	mb := &mockSendHTMLBot{}
+	err := SendHTML(context.Background(), mb, 456, "text with https://example.com link", "42")
+	if err != nil {
+		t.Fatalf("SendHTML() error = %v", err)
+	}
+
+	if mb.lastParams.LinkPreviewOptions == nil || !*mb.lastParams.LinkPreviewOptions.IsDisabled {
+		t.Error("link preview should be disabled even with reply")
+	}
+	if mb.lastParams.ReplyParameters == nil || mb.lastParams.ReplyParameters.MessageID != 42 {
+		t.Error("reply parameters should be set")
 	}
 }
