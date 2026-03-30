@@ -131,7 +131,9 @@ func TestFallbackSummary(t *testing.T) {
 
 // newMockOpenCodeServer creates a test HTTP server that mimics the opencode
 // serve session lifecycle endpoints. Returns the server and a cleanup function.
-func newMockOpenCodeServer(t *testing.T, responseText string, responseDelay time.Duration) *httptest.Server {
+// If releaseMsg is non-nil, the message handler blocks until it's closed
+// (instead of using a real time.Sleep, which stalls httptest.Server.Close).
+func newMockOpenCodeServer(t *testing.T, responseText string, releaseMsg <-chan struct{}) *httptest.Server {
 	t.Helper()
 
 	var createdSession string
@@ -148,12 +150,9 @@ func newMockOpenCodeServer(t *testing.T, responseText string, responseDelay time
 
 	// POST /session/{id}/message - send prompt, return response
 	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, r *http.Request) {
-		if responseDelay > 0 {
-			select {
-			case <-time.After(responseDelay):
-			case <-r.Context().Done():
-				return
-			}
+		if releaseMsg != nil {
+			<-releaseMsg
+			return
 		}
 
 		resp := responseMessage{
@@ -201,7 +200,7 @@ func TestSummarize(t *testing.T) {
 	const workspace = "/tmp/test-workspace"
 	const summaryText = "- Created a new file\n- Fixed 3 bugs\n- Updated tests"
 
-	ts := newMockOpenCodeServer(t, summaryText, 0)
+	ts := newMockOpenCodeServer(t, summaryText, nil)
 	defer ts.Close()
 
 	mgr := newTestServerManager(t, ts.URL, workspace)
@@ -219,15 +218,19 @@ func TestSummarize(t *testing.T) {
 func TestSummarizeTimeout(t *testing.T) {
 	const workspace = "/tmp/test-workspace"
 
-	// Server delays longer than the summarize timeout.
-	ts := newMockOpenCodeServer(t, "should not return", 60*time.Second)
-	defer ts.Close()
+	// Block the message handler until the test is done, without a real
+	// time.Sleep that stalls httptest.Server.Close for 60 seconds.
+	release := make(chan struct{})
+	ts := newMockOpenCodeServer(t, "should not return", release)
+	defer func() {
+		close(release)
+		ts.Close()
+	}()
 
 	mgr := newTestServerManager(t, ts.URL, workspace)
 	summarizer := NewSummarizer(mgr)
 
-	// Use a context with a very short timeout to verify timeout behavior
-	// without waiting 30 seconds.
+	// Use a context with a very short timeout to verify timeout behavior.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -235,7 +238,6 @@ func TestSummarizeTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("Summarize() expected error for timeout, got nil")
 	}
-	// The error should indicate context deadline exceeded or cancellation.
 	if !strings.Contains(err.Error(), "context deadline exceeded") && !strings.Contains(err.Error(), "context canceled") {
 		t.Errorf("Summarize() error = %v, want context deadline exceeded", err)
 	}

@@ -261,7 +261,7 @@ func TestSendResponseSummarizationFailure(t *testing.T) {
 	const summaryText = "AI summary" // won't be returned due to error
 
 	// Create a mock server that always returns an error.
-	ts := newMockOpenCodeServer(t, summaryText, 0)
+	ts := newMockOpenCodeServer(t, summaryText, nil)
 	ts.Close() // Close immediately so requests fail.
 
 	mgr := newTestServerManager(t, ts.URL, workspace)
@@ -349,7 +349,7 @@ func TestSendResponseWithSummarizer(t *testing.T) {
 	const workspace = "/tmp/test-workspace"
 	const summaryText = "- Created a new file\n- Fixed 3 bugs"
 
-	ts := newMockOpenCodeServer(t, summaryText, 0)
+	ts := newMockOpenCodeServer(t, summaryText, nil)
 	defer ts.Close()
 
 	mgr := newTestServerManager(t, ts.URL, workspace)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -37,15 +38,32 @@ func NewServerManager() *ServerManager {
 }
 
 // allocatePort returns the first available port in the configured range.
+// It skips ports already tracked in-memory AND ports that are bound by
+// external processes (e.g. orphaned servers from a previous run).
 // Must be called under sm.mu lock.
 func (sm *ServerManager) allocatePort() (int, error) {
 	for p := portRangeStart; p <= portRangeEnd; p++ {
-		if !sm.usedPorts[p] {
-			sm.usedPorts[p] = true
-			return p, nil
+		if sm.usedPorts[p] {
+			continue
 		}
+		if !isPortFree(p) {
+			slog.Debug("port already bound externally, skipping", "port", p)
+			continue
+		}
+		sm.usedPorts[p] = true
+		return p, nil
 	}
 	return 0, fmt.Errorf("all ports exhausted (%d-%d)", portRangeStart, portRangeEnd)
+}
+
+// isPortFree checks whether a TCP port is available by briefly binding to it.
+func isPortFree(port int) bool {
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
 }
 
 // releasePort marks a port as available.

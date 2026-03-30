@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -308,6 +309,12 @@ func (a *OpenCodeServeAdapter) Spawn(ctx context.Context, session core.SessionIn
 	handle, err := a.serverMgr.GetOrStart(session.WorkspacePath)
 	if err != nil {
 		return fmt.Errorf("opencode serve spawn: %w", err)
+	}
+
+	// Create the response file so message dispatch can append to it.
+	dir := filepath.Dir(session.ResponseFile)
+	if _, err := NewResponseFile(dir, session); err != nil {
+		return fmt.Errorf("opencode serve spawn: create response file: %w", err)
 	}
 
 	if session.AgentSessionID == "" {
