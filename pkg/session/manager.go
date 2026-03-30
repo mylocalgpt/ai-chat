@@ -111,6 +111,7 @@ func NewManager(store sessionStore, adapters AdapterRegistry, proxy *executor.Se
 }
 
 func (m *Manager) Send(ctx context.Context, senderID, channel, message, replyToMsgID string) error {
+	slog.Debug("session send", "req", core.RequestID(ctx), "sender", senderID)
 	sess, info, err := m.GetOrCreateActiveSession(ctx, senderID, channel, "")
 	if err != nil {
 		return err
@@ -133,6 +134,7 @@ func (m *Manager) Send(ctx context.Context, senderID, channel, message, replyToM
 }
 
 func (m *Manager) SendToSession(ctx context.Context, senderID, channel string, sessionID int64, message, replyToMsgID string) error {
+	slog.Debug("session send", "req", core.RequestID(ctx), "sender", senderID)
 	ws, sess, info, err := m.loadSessionTarget(ctx, sessionID, true)
 	if err != nil {
 		return err
@@ -154,6 +156,11 @@ func (m *Manager) SendToSession(ctx context.Context, senderID, channel string, s
 }
 
 func (m *Manager) HandleSecurityDecision(ctx context.Context, senderID, channel, token string, approved bool) (string, error) {
+	action := "rejected"
+	if approved {
+		action = "approved"
+	}
+	slog.Info("security decision", "sender", senderID, "action", action)
 	pending, ok := m.takePendingConfirmation(senderID, channel, token)
 	if !ok {
 		return "That confirmation has expired or was already used.", nil
@@ -239,8 +246,10 @@ func (m *Manager) GetOrCreateActiveSession(ctx context.Context, senderID, channe
 	}
 	if sess != nil {
 		if sess.Agent == agent || agent == "" {
+			slog.Debug("session restored", "session", sess.TmuxSession, "workspace", ws.Name)
 			return sess, info, nil
 		}
+		slog.Info("session expired", "session", sess.TmuxSession, "reason", "agent mismatch")
 		if err := m.expireSessionLocked(ctx, ws, sess); err != nil {
 			return nil, nil, err
 		}
@@ -369,6 +378,8 @@ func (m *Manager) createSessionLocked(ctx context.Context, workspaceID int64, ws
 		return nil, nil, fmt.Errorf("creating session record: %w", err)
 	}
 
+	slog.Info("session created", "session", sessionName, "workspace", ws.Name, "agent", agent)
+
 	// Persist the agent's own session ID if the adapter supports streaming.
 	if sa, ok := adapter.(executor.StreamingAdapter); ok {
 		if agentSessID := sa.GetAgentSessionID(*info); agentSessID != "" {
@@ -416,6 +427,7 @@ func (m *Manager) ClearSession(ctx context.Context, senderID, channel string) (*
 		return nil, fmt.Errorf("setting active session: %w", err)
 	}
 
+	slog.Info("session cleared", "session", sess.TmuxSession)
 	return info, nil
 }
 
@@ -450,6 +462,7 @@ func (m *Manager) KillSession(ctx context.Context, senderID, channel string) err
 		return fmt.Errorf("clearing active session: %w", err)
 	}
 
+	slog.Info("session killed", "session", sess.TmuxSession)
 	return nil
 }
 
@@ -512,6 +525,8 @@ func (m *Manager) SetAgent(ctx context.Context, senderID, channel, agent string)
 		return nil, err
 	}
 
+	oldAgent := getDefaultAgent(ws)
+
 	metadata := make(map[string]any)
 	if ws.Metadata != nil {
 		if err := json.Unmarshal(ws.Metadata, &metadata); err != nil {
@@ -528,6 +543,8 @@ func (m *Manager) SetAgent(ctx context.Context, senderID, channel, agent string)
 		return nil, fmt.Errorf("updating workspace metadata: %w", err)
 	}
 	ws.Metadata = newMetadata
+
+	slog.Info("agent changed", "workspace", ws.Name, "old_agent", oldAgent, "new_agent", agent)
 
 	activeSession, err := m.store.GetActiveSessionForWorkspace(ctx, senderID, channel, ws.ID)
 	if err == nil && activeSession != nil {
@@ -595,6 +612,7 @@ func (m *Manager) restoreMappedSessionLocked(ctx context.Context, senderID, chan
 	}
 	info := m.buildSessionInfo(ws, sess)
 	if !adapter.IsAlive(*info) {
+		slog.Warn("dead session cleared", "session", sess.TmuxSession, "workspace", ws.Name)
 		if err := m.expireSessionLocked(ctx, ws, sess); err != nil {
 			return nil, nil, err
 		}
@@ -688,6 +706,7 @@ func getDefaultAgent(ws *core.Workspace) string {
 }
 
 func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info *core.SessionInfo, message, senderID, channel, replyToMsgID string) error {
+	slog.Debug("dispatching", "session", sess.TmuxSession, "agent", sess.Agent, "streaming", false)
 	adapter, err := m.adapters.GetAdapter(sess.Agent)
 	if err != nil {
 		return fmt.Errorf("getting adapter for agent %q: %w", sess.Agent, err)
@@ -720,6 +739,7 @@ func (m *Manager) dispatchMessage(ctx context.Context, sess *core.Session, info 
 // persistence. This differs from the non-streaming path where the agent
 // response is handled inline.
 func (m *Manager) dispatchStreaming(ctx context.Context, sess *core.Session, info *core.SessionInfo, sa executor.StreamingAdapter, message, senderID, channel, replyToMsgID string) error {
+	slog.Debug("dispatching", "session", sess.TmuxSession, "agent", sess.Agent, "streaming", true)
 	ch, err := sa.SendStream(ctx, *info, message)
 	if err != nil {
 		return fmt.Errorf("streaming send: %w", err)
@@ -832,6 +852,7 @@ func (m *Manager) cleanupExpiredPendingConfirmations() {
 // session in the store, builds a SessionInfo, and delegates to the streaming
 // adapter's AbortStream method.
 func (m *Manager) AbortSession(ctx context.Context, agentSessionID string) error {
+	slog.Debug("session abort", "session", agentSessionID)
 	sess, err := m.store.GetSessionByAgentSessionID(ctx, agentSessionID)
 	if err != nil {
 		return fmt.Errorf("looking up session for agent session %q: %w", agentSessionID, err)
