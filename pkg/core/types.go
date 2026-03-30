@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
@@ -207,4 +209,31 @@ type ResponseEvent struct {
 	InputTokens    int               // from step-finish event
 	OutputTokens   int               // from step-finish event
 	Cost           float64           // from step-finish event
+}
+
+// ctxKey is an unexported type for context keys in this package.
+type ctxKey string
+
+const requestIDKey ctxKey = "request_id"
+
+// WithRequestID returns a new context with the given request ID attached.
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKey, id)
+}
+
+// RequestID extracts the request ID from the context.
+// Returns an empty string if no request ID is set.
+func RequestID(ctx context.Context) string {
+	if id, ok := ctx.Value(requestIDKey).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// NewRequestID generates a new request correlation ID.
+// Format: "req_" followed by 8 hex characters (4 random bytes).
+func NewRequestID() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return "req_" + hex.EncodeToString(b)
 }
