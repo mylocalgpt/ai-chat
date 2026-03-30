@@ -116,14 +116,17 @@ func (h *callbackHandler) handleSessionCallback(ctx context.Context, b telegramC
 	}
 	parts := strings.SplitN(data, ":", 2)
 	if len(parts) != 2 {
+		slog.Warn("session callback parse failed", "data", data)
 		return
 	}
 	workspaceID, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
+		slog.Warn("session callback parse failed", "data", data, "err", err)
 		return
 	}
 	sessionID, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
+		slog.Warn("session callback parse failed", "data", data, "err", err)
 		return
 	}
 	result, err := h.router.HandleSessionSelection(ctx, strconv.FormatInt(chatID, 10), "telegram", workspaceID, sessionID)
@@ -207,6 +210,7 @@ func (h *callbackHandler) handleSecurityCallback(ctx context.Context, b telegram
 	}
 	parts := strings.SplitN(data, ":", 2)
 	if len(parts) != 2 {
+		slog.Warn("security callback parse failed", "data", data)
 		return
 	}
 	approved := parts[0] == "approve"
@@ -234,5 +238,7 @@ func (h *callbackHandler) renderCallbackResult(ctx context.Context, b telegramCa
 		params.Text = formatted
 		params.ParseMode = models.ParseModeHTML
 	}
-	_, _ = b.EditMessageText(ctx, params)
+	if _, err := b.EditMessageText(ctx, params); err != nil {
+		slog.Warn("edit message failed", "err", err, "chat_id", chatID, "msg_id", messageID)
+	}
 }

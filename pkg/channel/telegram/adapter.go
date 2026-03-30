@@ -183,6 +183,8 @@ func (t *TelegramAdapter) ProcessUpdate(ctx context.Context, update *models.Upda
 }
 
 func (t *TelegramAdapter) ProcessCallback(ctx context.Context, update *models.Update) {
+	reqID := core.NewRequestID()
+	ctx = core.WithRequestID(ctx, reqID)
 	if callbackBot, ok := t.bot.(telegramCallbackBot); ok {
 		t.callbackHandler.handleCallback(ctx, callbackBot, update)
 	}
@@ -190,6 +192,7 @@ func (t *TelegramAdapter) ProcessCallback(ctx context.Context, update *models.Up
 
 func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message == nil {
+		slog.Warn("nil message in update")
 		return
 	}
 
@@ -204,6 +207,9 @@ func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *
 		return
 	}
 
+	reqID := core.NewRequestID()
+	ctx = core.WithRequestID(ctx, reqID)
+
 	msg := core.InboundMessage{
 		ID:        strconv.FormatInt(int64(update.Message.ID), 10),
 		Channel:   "telegram",
@@ -213,7 +219,10 @@ func (t *TelegramAdapter) handleUpdate(ctx context.Context, b *bot.Bot, update *
 		Raw:       update,
 	}
 
+	slog.Debug("message received", "req", reqID, "sender", msg.SenderID, "msg_id", msg.ID)
+
 	if t.router != nil {
+		slog.Debug("routing message", "req", reqID)
 		result, err := t.router.Route(ctx, router.Request{Message: &msg})
 		if err != nil {
 			slog.Error("router failed", "channel", msg.Channel, "sender", msg.SenderID, "error", err)
@@ -270,6 +279,7 @@ func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) er
 	formatted := FormatHTML(msg.Content)
 	chunks := SplitMessage(formatted, FormattedMaxLen)
 	if len(chunks) == 0 {
+		slog.Warn("empty chunks after formatting", "req", core.RequestID(ctx), "sender", msg.RecipientID)
 		return nil
 	}
 
@@ -292,7 +302,7 @@ func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) er
 		}
 
 		if err := SendHTML(ctx, t.bot, chatID, chunk, replyTo); err != nil {
-			return err
+			return fmt.Errorf("chunk %d/%d: %w", i+1, len(chunks), err)
 		}
 
 		if i < len(chunks)-1 {
@@ -308,6 +318,7 @@ func (t *TelegramAdapter) Send(ctx context.Context, msg core.OutboundMessage) er
 // The caller (forwardResponses) is responsible for delivering the final message
 // via SendResponse or Send.
 func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, replyToID int, agentSessionID string, events <-chan core.AgentEvent) (core.StreamResult, error) {
+	slog.Debug("streaming started", "req", core.RequestID(ctx), "chat_id", chatID)
 	reporter := NewProgressReporter(t.bot, chatID, replyToID, agentSessionID)
 
 	var textBuf strings.Builder
@@ -368,6 +379,7 @@ func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, reply
 			done = true
 
 		case core.EventError:
+			slog.Warn("stream error event", "req", core.RequestID(ctx), "err", event.Text)
 			reporter.Finish(ctx)
 			_ = t.Send(ctx, core.OutboundMessage{
 				Channel:     "telegram",
@@ -382,6 +394,7 @@ func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, reply
 
 	// Ensure reporter is cleaned up even if channel closed without idle/error.
 	if started && !done {
+		slog.Warn("stream ended abnormally", "req", core.RequestID(ctx))
 		reporter.Finish(ctx)
 	}
 
@@ -410,6 +423,7 @@ func (t *TelegramAdapter) SendResponse(ctx context.Context, params core.Response
 
 	// Short path: send directly via existing Send().
 	if contentLen <= shortThreshold {
+		slog.Debug("sending response", "req", core.RequestID(ctx), "content_len", contentLen, "path", "direct")
 		content := params.Content
 		if footer := formatTokenFooter(params.InputTokens, params.OutputTokens, params.Cost); footer != "" {
 			content += footer
@@ -423,6 +437,12 @@ func (t *TelegramAdapter) SendResponse(ctx context.Context, params core.Response
 	}
 
 	// Long path: typing indicator + summarization.
+	path := "summarized"
+	if contentLen > longThreshold {
+		path = "document"
+	}
+	slog.Debug("sending response", "req", core.RequestID(ctx), "content_len", contentLen, "path", path)
+
 	typingCtx, typingCancel := context.WithCancel(ctx)
 	defer typingCancel()
 
@@ -549,6 +569,7 @@ func (t *TelegramAdapter) renderResult(ctx context.Context, recipientID, replyTo
 		_, err = t.bot.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: result.SecurityConfirmation.Summary, ReplyMarkup: SecurityWarningKeyboard(result.SecurityConfirmation.Token)})
 		return err
 	default:
+		slog.Warn("unknown result kind", "kind", result.Kind)
 		return nil
 	}
 }

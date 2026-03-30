@@ -230,6 +230,7 @@ func (m *Manager) findOrphanedTmuxSessions(ctx context.Context, activeSessions [
 func (m *Manager) buildSessionInfoFromSession(ctx context.Context, sess *core.Session) *core.SessionInfo {
 	ws, err := m.store.GetWorkspaceByID(ctx, sess.WorkspaceID)
 	if err != nil {
+		slog.Warn("workspace lookup failed", "session", sess.TmuxSession, "err", err)
 		return &core.SessionInfo{
 			Name:      sess.TmuxSession,
 			Slug:      sess.Slug,

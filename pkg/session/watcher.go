@@ -149,6 +149,7 @@ func (w *Watcher) processFile(ctx context.Context, path string) {
 		return
 	}
 	if w.proxy != nil && len(w.proxy.Scan(content)) > 0 {
+		slog.Info("response blocked", "session", sessionName)
 		content = "Response blocked because it may contain sensitive content."
 	}
 

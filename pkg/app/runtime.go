@@ -123,6 +123,9 @@ func forwardResponses(ctx context.Context, st messageStore, events <-chan core.R
 				return
 			}
 
+			reqID := core.NewRequestID()
+			slog.Debug("forwarding response", "req", reqID, "session", event.SessionName, "sender", event.SenderID)
+
 			content := event.Content
 			streamed := false
 
@@ -137,7 +140,7 @@ func forwardResponses(ctx context.Context, st messageStore, events <-chan core.R
 						replyToID, _ := strconv.Atoi(event.ReplyToID)
 						result, err := sc.SendStreaming(ctx, chatID, replyToID, event.AgentSessionID, event.Events)
 						if err != nil {
-							slog.Warn("streaming delivery failed", "error", err)
+							slog.Warn("streaming delivery failed", "error", err, "session", event.SessionName, "sender", event.SenderID)
 							drainEvents(event.Events)
 							continue
 						}
@@ -217,6 +220,8 @@ func forwardResponses(ctx context.Context, st messageStore, events <-chan core.R
 			}); err != nil {
 				slog.Warn("failed to persist response event", "error", err)
 			}
+
+			slog.Debug("response delivered", "req", reqID)
 		}
 	}
 }
@@ -235,6 +240,7 @@ func agentMessageIndex(responseFile string) int {
 	}
 	rf, err := executor.ReadResponseFile(responseFile)
 	if err != nil {
+		slog.Warn("response file unreadable", "file", responseFile, "err", err)
 		return 0
 	}
 	count := 0
