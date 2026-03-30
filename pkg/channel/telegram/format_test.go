@@ -155,6 +155,11 @@ func TestConvertMarkdownToHTML(t *testing.T) {
 			contains: "<i>italic text</i>",
 		},
 		{
+			name:     "italic still works with hardened regex",
+			input:    "Some *italic* text",
+			contains: "<i>italic</i>",
+		},
+		{
 			name:     "snake_case not italicized",
 			input:    "my_variable_name",
 			contains: "my_variable_name",
@@ -289,6 +294,11 @@ func TestFormatHTML(t *testing.T) {
 			input:    "Hello world\n\n*150 tokens | $0.0001*",
 			contains: "<i>150 tokens | $0.0001</i>",
 		},
+		{
+			name:     "bullet list produces unicode bullets not italic",
+			input:    "* first item\n* second item",
+			contains: "\u2022 first item",
+		},
 	}
 
 	for _, tt := range tests {
@@ -301,6 +311,19 @@ func TestFormatHTML(t *testing.T) {
 				t.Errorf("result %q does not contain %q", result, tt.contains)
 			}
 		})
+	}
+}
+
+func TestFormatHTMLBulletListNoItalic(t *testing.T) {
+	result := FormatHTML("* first item\n* second item")
+	if strings.Contains(result, "<i>") {
+		t.Errorf("bullet list should not produce italic tags, got %q", result)
+	}
+	if !strings.Contains(result, "\u2022 first item") {
+		t.Errorf("bullet list should produce unicode bullets, got %q", result)
+	}
+	if !strings.Contains(result, "\u2022 second item") {
+		t.Errorf("bullet list should produce unicode bullets for second item, got %q", result)
 	}
 }
 
@@ -546,6 +569,54 @@ func TestConvertBlockquotes(t *testing.T) {
 			result := convertBlockquotes(tt.input)
 			if result != tt.want {
 				t.Errorf("got %q, want %q", result, tt.want)
+			}
+		})
+	}
+}
+
+func TestConvertLists(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "dash bullets",
+			input: "- first item\n- second item",
+			want:  "  \u2022 first item\n  \u2022 second item",
+		},
+		{
+			name:  "asterisk bullets",
+			input: "* bullet one\n* bullet two",
+			want:  "  \u2022 bullet one\n  \u2022 bullet two",
+		},
+		{
+			name:  "numbered list",
+			input: "1. first\n2. second\n3. third",
+			want:  "  1. first\n  2. second\n  3. third",
+		},
+		{
+			name:  "no list passthrough",
+			input: "no list here",
+			want:  "no list here",
+		},
+		{
+			name:  "mixed context with surrounding text",
+			input: "text before\n- list item\ntext after",
+			want:  "text before\n  \u2022 list item\ntext after",
+		},
+		{
+			name:  "mixed styles",
+			input: "- bullet\n1. numbered",
+			want:  "  \u2022 bullet\n  1. numbered",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertLists(tt.input)
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
 	}

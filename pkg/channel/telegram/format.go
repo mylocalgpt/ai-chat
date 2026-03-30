@@ -113,6 +113,17 @@ func convertBlockquotes(text string) string {
 	return strings.Join(result, "\n")
 }
 
+var (
+	bulletListRegex   = regexp.MustCompile(`(?m)^(\s*)[-*]\s+`)
+	numberedListRegex = regexp.MustCompile(`(?m)^(\s*)(\d+)\.\s+`)
+)
+
+func convertLists(text string) string {
+	text = bulletListRegex.ReplaceAllString(text, "$1  \u2022 ")
+	text = numberedListRegex.ReplaceAllString(text, "$1  $2. ")
+	return text
+}
+
 var tableSepRegex = regexp.MustCompile(`^\|?[\s\-:]+(\|[\s\-:]+)+\|?\s*$`)
 
 func isTableSeparator(line string) bool {
@@ -238,6 +249,8 @@ func convertMarkdownToHTML(text string) string {
 	strikethroughRegex := regexp.MustCompile(`~~(.+?)~~`)
 	text = strikethroughRegex.ReplaceAllString(text, "<s>$1</s>")
 
+	text = convertLists(text)
+
 	boldDoubleAsterisk := regexp.MustCompile(`\*\*(.+?)\*\*`)
 	for boldDoubleAsterisk.MatchString(text) {
 		text = boldDoubleAsterisk.ReplaceAllString(text, "<b>$1</b>")
@@ -248,7 +261,7 @@ func convertMarkdownToHTML(text string) string {
 		text = boldDoubleUnderscore.ReplaceAllString(text, "<b>$1</b>")
 	}
 
-	italicSingleAsterisk := regexp.MustCompile(`\*([^*]+)\*`)
+	italicSingleAsterisk := regexp.MustCompile(`\*([^*\s][^*]*)\*`)
 	for italicSingleAsterisk.MatchString(text) {
 		text = italicSingleAsterisk.ReplaceAllString(text, "<i>$1</i>")
 	}
