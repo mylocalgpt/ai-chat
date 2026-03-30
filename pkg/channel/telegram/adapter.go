@@ -342,9 +342,11 @@ func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, reply
 
 		switch event.Type {
 		case core.EventBusy:
-			started = true
-			if err := reporter.Start(ctx); err != nil {
-				slog.Error("progress reporter start failed", "chat_id", chatID, "error", err)
+			if !started {
+				started = true
+				if err := reporter.Start(ctx); err != nil {
+					slog.Error("progress reporter start failed", "chat_id", chatID, "error", err)
+				}
 			}
 
 		case core.EventTextDelta:

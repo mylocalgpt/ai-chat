@@ -93,7 +93,7 @@ func StartBackground(ctx context.Context, st messageStore, manager *session.Mana
 
 	go func() {
 		defer wg.Done()
-		forwardResponses(ctx, st, manager.ResponseCh(), channel)
+		forwardResponses(ctx, st, manager, channel)
 	}()
 
 	return wg
@@ -113,7 +113,8 @@ func StartManagerBackground(ctx context.Context, manager *session.Manager) *sync
 	return &wg
 }
 
-func forwardResponses(ctx context.Context, st messageStore, events <-chan core.ResponseEvent, channel core.Channel) {
+func forwardResponses(ctx context.Context, st messageStore, manager *session.Manager, channel core.Channel) {
+	events := manager.ResponseCh()
 	for {
 		select {
 		case <-ctx.Done():
@@ -155,6 +156,9 @@ func forwardResponses(ctx context.Context, st messageStore, events <-chan core.R
 								slog.Warn("failed to persist streaming response to file",
 									"path", event.ResponseFile, "error", err)
 							}
+							// Tell the watcher this file was already delivered
+							// via streaming so it does not re-emit the event.
+							manager.MarkResponseDelivered(event.ResponseFile)
 						}
 
 						// Compute MsgIdx from response file after writing.

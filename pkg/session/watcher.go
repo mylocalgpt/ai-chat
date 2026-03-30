@@ -99,6 +99,25 @@ func (w *Watcher) pollFiles(ctx context.Context) {
 	}
 }
 
+// MarkDelivered updates the watcher's internal tracking so it will not
+// re-emit a response event for a file whose content was already delivered
+// through the streaming path.
+func (w *Watcher) MarkDelivered(responseFile string) {
+	rf, err := executor.ReadResponseFile(responseFile)
+	if err != nil {
+		return
+	}
+	var count int64
+	for _, m := range rf.Messages {
+		if m.Role == "agent" {
+			count++
+		}
+	}
+	w.mu.Lock()
+	w.lastSeen[responseFile] = count
+	w.mu.Unlock()
+}
+
 func (w *Watcher) processFile(ctx context.Context, path string) {
 	sessionName := strings.TrimSuffix(filepath.Base(path), ".json")
 

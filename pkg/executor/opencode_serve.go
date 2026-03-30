@@ -99,10 +99,36 @@ func (h *ServerHandle) SubscribeEvents(ctx context.Context) (*SSEStream, error) 
 	}, nil
 }
 
+// unwrapSSEEnvelope handles the opencode serve event envelope format.
+// Events arrive as: data: {"type":"<event_type>","properties":{<payload>}}
+// This function extracts the event type and inner payload so parseSSEEvent
+// can process them with the same logic used for native SSE event: fields.
+func unwrapSSEEnvelope(data []byte) (eventType string, payload []byte) {
+	var envelope struct {
+		Type       string          `json:"type"`
+		Properties json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil || envelope.Type == "" {
+		return "", data
+	}
+	if len(envelope.Properties) == 0 {
+		return envelope.Type, nil
+	}
+	return envelope.Type, envelope.Properties
+}
+
 // parseSSEEvent maps a raw SSE event to a typed AgentEvent.
 // Returns (event, true) for recognized events, (AgentEvent{}, false) for
 // ignored or unknown events.
 func parseSSEEvent(eventType string, data []byte) (core.AgentEvent, bool) {
+	// opencode serve wraps events in an envelope:
+	//   data: {"type":"message.part.delta","properties":{...}}
+	// When there is no SSE "event:" field, unwrap the envelope to get the
+	// real event type and payload.
+	if eventType == "" && len(data) > 0 {
+		eventType, data = unwrapSSEEnvelope(data)
+	}
+
 	switch eventType {
 	case "message.part.delta":
 		var d struct {
@@ -123,6 +149,18 @@ func parseSSEEvent(eventType string, data []byte) (core.AgentEvent, bool) {
 		return core.AgentEvent{}, false
 
 	case "message.part.updated":
+		// The envelope format nests the part data:
+		//   {"sessionID":"...","part":{"type":"text","text":"..."}, ...}
+		// Legacy/direct format has fields at the top level:
+		//   {"type":"text","text":"..."}
+		var wrapper struct {
+			Part json.RawMessage `json:"part"`
+		}
+		partData := data
+		if json.Unmarshal(data, &wrapper) == nil && len(wrapper.Part) > 0 {
+			partData = wrapper.Part
+		}
+
 		var p struct {
 			Type     string           `json:"type"`
 			Text     string           `json:"text"`
@@ -133,7 +171,7 @@ func parseSSEEvent(eventType string, data []byte) (core.AgentEvent, bool) {
 			Cost     float64          `json:"cost"`
 			Reason   string           `json:"reason"`
 		}
-		if err := json.Unmarshal(data, &p); err != nil {
+		if err := json.Unmarshal(partData, &p); err != nil {
 			raw := string(data)
 			if len(raw) > 200 {
 				raw = raw[:200]
@@ -156,8 +194,13 @@ func parseSSEEvent(eventType string, data []byte) (core.AgentEvent, bool) {
 		return core.AgentEvent{}, false
 
 	case "session.status":
+		// The envelope format nests the status: {"sessionID":"...","status":{"type":"idle"}}
+		// Legacy/direct format is just: {"type":"idle"}
 		var s struct {
-			Type string `json:"type"`
+			Type   string `json:"type"`
+			Status struct {
+				Type string `json:"type"`
+			} `json:"status"`
 		}
 		if err := json.Unmarshal(data, &s); err != nil {
 			raw := string(data)
@@ -167,7 +210,11 @@ func parseSSEEvent(eventType string, data []byte) (core.AgentEvent, bool) {
 			slog.Warn("sse parse failed", "event_type", eventType, "raw", raw, slog.Any("err", err))
 			return core.AgentEvent{}, false
 		}
-		switch s.Type {
+		statusType := s.Type
+		if statusType == "" {
+			statusType = s.Status.Type
+		}
+		switch statusType {
 		case "busy":
 			return core.AgentEvent{Type: core.EventBusy}, true
 		case "idle":

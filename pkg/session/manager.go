@@ -642,6 +642,12 @@ func (m *Manager) ResponseCh() <-chan core.ResponseEvent {
 	return m.responseCh
 }
 
+// MarkResponseDelivered tells the watcher that a response file was already
+// delivered via the streaming path, preventing a duplicate emission.
+func (m *Manager) MarkResponseDelivered(responseFile string) {
+	m.watcher.MarkDelivered(responseFile)
+}
+
 func (m *Manager) Run(ctx context.Context) error {
 	if _, err := m.ReconcileOnStartup(ctx); err != nil {
 		slog.Warn("startup reconciliation failed", "error", err)

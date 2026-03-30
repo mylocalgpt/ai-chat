@@ -117,6 +117,62 @@ func TestParseSSEEvent(t *testing.T) {
 			want:      core.AgentEvent{},
 			wantOK:    false,
 		},
+		// Envelope-wrapped events (opencode serve format: no event: field,
+		// type and payload inside data JSON).
+		{
+			name:      "envelope: text delta",
+			eventType: "",
+			data:      `{"type":"message.part.delta","properties":{"sessionID":"ses_123","messageID":"msg_1","partID":"prt_1","field":"text","delta":"Hi"}}`,
+			want:      core.AgentEvent{Type: core.EventTextDelta, Text: "Hi"},
+			wantOK:    true,
+		},
+		{
+			name:      "envelope: text part updated",
+			eventType: "",
+			data:      `{"type":"message.part.updated","properties":{"sessionID":"ses_123","part":{"type":"text","text":"Complete response"},"time":1234}}`,
+			want:      core.AgentEvent{Type: core.EventText, Text: "Complete response"},
+			wantOK:    true,
+		},
+		{
+			name:      "envelope: step-finish",
+			eventType: "",
+			data:      `{"type":"message.part.updated","properties":{"sessionID":"ses_123","part":{"type":"step-finish","reason":"stop","tokens":{"input":100,"output":50},"cost":0.01},"time":1234}}`,
+			want: core.AgentEvent{
+				Type:   core.EventStepFinish,
+				Tokens: &core.TokenUsage{Input: 100, Output: 50},
+				Cost:   0.01,
+				Reason: "stop",
+			},
+			wantOK: true,
+		},
+		{
+			name:      "envelope: session status idle",
+			eventType: "",
+			data:      `{"type":"session.status","properties":{"sessionID":"ses_123","status":{"type":"idle"}}}`,
+			want:      core.AgentEvent{Type: core.EventIdle},
+			wantOK:    true,
+		},
+		{
+			name:      "envelope: session status busy",
+			eventType: "",
+			data:      `{"type":"session.status","properties":{"sessionID":"ses_123","status":{"type":"busy"}}}`,
+			want:      core.AgentEvent{Type: core.EventBusy},
+			wantOK:    true,
+		},
+		{
+			name:      "envelope: server.connected ignored",
+			eventType: "",
+			data:      `{"type":"server.connected","properties":{}}`,
+			want:      core.AgentEvent{},
+			wantOK:    false,
+		},
+		{
+			name:      "envelope: server.heartbeat ignored",
+			eventType: "",
+			data:      `{"type":"server.heartbeat","properties":{}}`,
+			want:      core.AgentEvent{},
+			wantOK:    false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -396,6 +452,47 @@ func TestConsumeEvents_StopsOnIdle(t *testing.T) {
 	}
 	if events[1].Type != core.EventIdle {
 		t.Errorf("second event type = %q, want %q", events[1].Type, core.EventIdle)
+	}
+}
+
+func TestConsumeEvents_EnvelopeFormat(t *testing.T) {
+	// Test with the envelope format used by opencode serve (no event: field).
+	sseInput := "" +
+		"data: {\"type\":\"server.connected\",\"properties\":{}}\n\n" +
+		"data: {\"type\":\"session.status\",\"properties\":{\"sessionID\":\"ses_1\",\"status\":{\"type\":\"busy\"}}}\n\n" +
+		"data: {\"type\":\"message.part.delta\",\"properties\":{\"sessionID\":\"ses_1\",\"field\":\"text\",\"delta\":\"Hi\"}}\n\n" +
+		"data: {\"type\":\"message.part.updated\",\"properties\":{\"sessionID\":\"ses_1\",\"part\":{\"type\":\"text\",\"text\":\"Hi there\"}}}\n\n" +
+		"data: {\"type\":\"session.status\",\"properties\":{\"sessionID\":\"ses_1\",\"status\":{\"type\":\"idle\"}}}\n\n"
+	stream := newSSEStream(sseInput)
+	respBody := io.NopCloser(strings.NewReader(""))
+
+	adapter := NewOpenCodeServeAdapter(nil)
+	ch := make(chan core.AgentEvent, 64)
+
+	go func() {
+		adapter.consumeEvents(context.Background(), stream, respBody, "test-session", ch)
+	}()
+
+	var events []core.AgentEvent
+	for evt := range ch {
+		events = append(events, evt)
+	}
+
+	// server.connected is ignored, so we should get: busy, text_delta, text, idle
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events, got %d: %+v", len(events), events)
+	}
+	if events[0].Type != core.EventBusy {
+		t.Errorf("event[0] type = %q, want %q", events[0].Type, core.EventBusy)
+	}
+	if events[1].Type != core.EventTextDelta || events[1].Text != "Hi" {
+		t.Errorf("event[1] = %+v, want TextDelta 'Hi'", events[1])
+	}
+	if events[2].Type != core.EventText || events[2].Text != "Hi there" {
+		t.Errorf("event[2] = %+v, want Text 'Hi there'", events[2])
+	}
+	if events[3].Type != core.EventIdle {
+		t.Errorf("event[3] type = %q, want %q", events[3].Type, core.EventIdle)
 	}
 }
 
