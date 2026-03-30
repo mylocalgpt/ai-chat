@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1048,5 +1049,171 @@ func TestSendHTMLLinkPreviewWithReply(t *testing.T) {
 	}
 	if mb.lastParams.ReplyParameters == nil || mb.lastParams.ReplyParameters.MessageID != 42 {
 		t.Error("reply parameters should be set")
+	}
+}
+
+func TestValidateHTML(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "balanced tags pass through unchanged",
+			input: "<b>bold</b>",
+			want:  "<b>bold</b>",
+		},
+		{
+			name:  "missing close gets appended",
+			input: "<b>bold",
+			want:  "<b>bold</b>",
+		},
+		{
+			name:  "excess close gets stripped",
+			input: "bold</b>",
+			want:  "bold",
+		},
+		{
+			name:  "multiple missing closes",
+			input: "<b>one<b>two",
+			want:  "<b>one<b>two</b></b>",
+		},
+		{
+			name:  "mixed tags with missing close",
+			input: "<b><i>text</b>",
+			want:  "<b><i>text</b></i>",
+		},
+		{
+			name:  "already balanced complex",
+			input: "<b>bold</b> and <i>italic</i>",
+			want:  "<b>bold</b> and <i>italic</i>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := validateHTML(tt.input)
+			if got != tt.want {
+				t.Errorf("validateHTML(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStripHTMLForFallback(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "tags stripped",
+			input: "<b>bold</b> text",
+			want:  "bold text",
+		},
+		{
+			name:  "entities unescaped",
+			input: "a &lt; b &amp; c &gt; d",
+			want:  "a < b & c > d",
+		},
+		{
+			name:  "attributed tags stripped",
+			input: `<a href="url">link</a>`,
+			want:  "link",
+		},
+		{
+			name:  "passthrough",
+			input: "no html",
+			want:  "no html",
+		},
+		{
+			name:  "combined tags and entities",
+			input: "<b>bold &amp; &lt;italic&gt;</b>",
+			want:  "bold & <italic>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripHTMLForFallback(tt.input)
+			if got != tt.want {
+				t.Errorf("stripHTMLForFallback(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// mockFallbackBot returns "can't parse entities" on the first SendMessage call,
+// then succeeds on the second (plain text retry).
+type mockFallbackBot struct {
+	calls     []*bot.SendMessageParams
+	failFirst bool
+	callCount int
+}
+
+func (b *mockFallbackBot) GetMe(context.Context) (*models.User, error) {
+	return &models.User{ID: 1, IsBot: true}, nil
+}
+func (b *mockFallbackBot) Start(context.Context) {}
+func (b *mockFallbackBot) SendMessage(_ context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+	cp := *params
+	b.calls = append(b.calls, &cp)
+	b.callCount++
+	if b.failFirst && b.callCount == 1 {
+		return nil, fmt.Errorf("%w, Bad Request: can't parse entities", bot.ErrorBadRequest)
+	}
+	return &models.Message{ID: 1, Chat: models.Chat{ID: params.ChatID.(int64)}}, nil
+}
+
+func (b *mockFallbackBot) SendChatAction(context.Context, *bot.SendChatActionParams) (bool, error) {
+	return true, nil
+}
+func (b *mockFallbackBot) SetMyCommands(context.Context, *bot.SetMyCommandsParams) (bool, error) {
+	return true, nil
+}
+func (b *mockFallbackBot) DeleteMessage(context.Context, *bot.DeleteMessageParams) (bool, error) {
+	return true, nil
+}
+func (b *mockFallbackBot) EditMessageText(_ context.Context, params *bot.EditMessageTextParams) (*models.Message, error) {
+	return &models.Message{ID: params.MessageID, Chat: models.Chat{ID: params.ChatID.(int64)}}, nil
+}
+func (b *mockFallbackBot) SendDocument(_ context.Context, params *bot.SendDocumentParams) (*models.Message, error) {
+	return &models.Message{ID: 1, Chat: models.Chat{ID: params.ChatID.(int64)}}, nil
+}
+
+func TestSendHTMLPlainTextFallback(t *testing.T) {
+	mb := &mockFallbackBot{failFirst: true}
+	htmlText := "<b>bold &amp; &lt;italic&gt;</b>"
+
+	err := SendHTML(context.Background(), mb, 123, htmlText, "")
+	if err != nil {
+		t.Fatalf("SendHTML() error = %v", err)
+	}
+
+	if len(mb.calls) != 2 {
+		t.Fatalf("expected 2 SendMessage calls, got %d", len(mb.calls))
+	}
+
+	// First call should be HTML.
+	if mb.calls[0].ParseMode != models.ParseModeHTML {
+		t.Errorf("first call should use HTML parse mode, got %q", mb.calls[0].ParseMode)
+	}
+
+	// Second call should be plain text with stripped HTML and unescaped entities.
+	if mb.calls[1].ParseMode != "" {
+		t.Errorf("second call should have empty parse mode, got %q", mb.calls[1].ParseMode)
+	}
+
+	plainText := mb.calls[1].Text
+	if strings.Contains(plainText, "<b>") || strings.Contains(plainText, "</b>") {
+		t.Errorf("plain text fallback should not contain HTML tags, got %q", plainText)
+	}
+	if strings.Contains(plainText, "&amp;") || strings.Contains(plainText, "&lt;") || strings.Contains(plainText, "&gt;") {
+		t.Errorf("plain text fallback should not contain HTML entities, got %q", plainText)
+	}
+
+	want := "bold & <italic>"
+	if plainText != want {
+		t.Errorf("plain text fallback = %q, want %q", plainText, want)
 	}
 }

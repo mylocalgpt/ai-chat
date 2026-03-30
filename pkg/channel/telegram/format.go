@@ -298,18 +298,37 @@ func restoreCodeBlocks(text string, blocks []codeBlock) string {
 }
 
 func validateHTML(text string) string {
-	openTags := []string{"b", "i", "u", "s", "code", "pre", "a", "blockquote", "tg-spoiler"}
-	for _, tag := range openTags {
+	tags := []string{"b", "i", "u", "s", "code", "pre", "a", "blockquote", "tg-spoiler"}
+	for _, tag := range tags {
 		openCount := strings.Count(text, "<"+tag+">") + strings.Count(text, "<"+tag+" ")
 		closeCount := strings.Count(text, "</"+tag+">")
-		if openCount != closeCount {
-			slog.Warn("unmatched HTML tag detected, stripping", "tag", tag, "open", openCount, "close", closeCount)
-			openRegex := regexp.MustCompile("<" + tag + "[^>]*>")
-			closeRegex := regexp.MustCompile("</" + tag + ">")
-			text = openRegex.ReplaceAllString(text, "")
-			text = closeRegex.ReplaceAllString(text, "")
+		if openCount > closeCount {
+			// Append missing close tags at the end.
+			for i := 0; i < openCount-closeCount; i++ {
+				text += "</" + tag + ">"
+			}
+		} else if closeCount > openCount {
+			// Strip excess close tags from the end.
+			excess := closeCount - openCount
+			for i := 0; i < excess; i++ {
+				idx := strings.LastIndex(text, "</"+tag+">")
+				if idx >= 0 {
+					text = text[:idx] + text[idx+len("</"+tag+">"):]
+				}
+			}
 		}
 	}
+	return text
+}
+
+var htmlTagRegex = regexp.MustCompile("<[^>]*>")
+
+func stripHTMLForFallback(text string) string {
+	text = htmlTagRegex.ReplaceAllString(text, "")
+	text = strings.ReplaceAll(text, "&lt;", "<")
+	text = strings.ReplaceAll(text, "&gt;", ">")
+	text = strings.ReplaceAll(text, "&quot;", "\"")
+	text = strings.ReplaceAll(text, "&amp;", "&")
 	return text
 }
 
@@ -366,7 +385,7 @@ func SendHTML(ctx context.Context, b telegramBot, chatID int64, text string, rep
 		if errors.Is(err, bot.ErrorBadRequest) && strings.Contains(err.Error(), "can't parse entities") {
 			slog.Warn("HTML parse failed, retrying as plain text", "chat_id", chatID, "html_len", len(text))
 			params.ParseMode = ""
-			params.Text = text
+			params.Text = stripHTMLForFallback(text)
 			_, retryErr := b.SendMessage(ctx, params)
 			if retryErr != nil {
 				return fmt.Errorf("sending plain text message to %d: %w", chatID, retryErr)
