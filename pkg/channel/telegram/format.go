@@ -253,11 +253,6 @@ func convertMarkdownToHTML(text string) string {
 		text = italicSingleAsterisk.ReplaceAllString(text, "<i>$1</i>")
 	}
 
-	italicSingleUnderscore := regexp.MustCompile("_([^_]+)_")
-	for italicSingleUnderscore.MatchString(text) {
-		text = italicSingleUnderscore.ReplaceAllString(text, "<i>$1</i>")
-	}
-
 	headingRegex := regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
 	text = headingRegex.ReplaceAllString(text, "\n<b>$1</b>\n")
 
@@ -387,12 +382,13 @@ func formatNumber(n int) string {
 	return string(result)
 }
 
-// formatTokenFooter returns an italic HTML footer with total token count and cost.
+// formatTokenFooter returns a markdown italic footer with total token count and cost.
+// The asterisk syntax is converted to <i>...</i> by FormatHTML's convertMarkdownToHTML.
 // Returns empty string if both input and output tokens are zero.
 func formatTokenFooter(inputTokens, outputTokens int, cost float64) string {
 	if inputTokens == 0 && outputTokens == 0 {
 		return ""
 	}
 	total := inputTokens + outputTokens
-	return fmt.Sprintf("\n\n<i>%s tokens | $%.4f</i>", formatNumber(total), cost)
+	return fmt.Sprintf("\n\n*%s tokens | $%.4f*", formatNumber(total), cost)
 }

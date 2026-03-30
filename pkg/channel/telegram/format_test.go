@@ -155,9 +155,9 @@ func TestConvertMarkdownToHTML(t *testing.T) {
 			contains: "<i>italic text</i>",
 		},
 		{
-			name:     "italic with underscore",
-			input:    "_italic text_",
-			contains: "<i>italic text</i>",
+			name:     "snake_case not italicized",
+			input:    "my_variable_name",
+			contains: "my_variable_name",
 		},
 		{
 			name:     "link",
@@ -283,6 +283,11 @@ func TestFormatHTML(t *testing.T) {
 			name:     "blockquote conversion",
 			input:    "> quote",
 			contains: "<blockquote>quote</blockquote>",
+		},
+		{
+			name:     "token footer italic via pipeline",
+			input:    "Hello world\n\n*150 tokens | $0.0001*",
+			contains: "<i>150 tokens | $0.0001</i>",
 		},
 	}
 
@@ -865,28 +870,28 @@ func TestFormatTokenFooter(t *testing.T) {
 			input:  1500,
 			output: 500,
 			cost:   0.0123,
-			want:   "\n\n<i>2,000 tokens | $0.0123</i>",
+			want:   "\n\n*2,000 tokens | $0.0123*",
 		},
 		{
 			name:   "small numbers",
 			input:  50,
 			output: 30,
 			cost:   0.0001,
-			want:   "\n\n<i>80 tokens | $0.0001</i>",
+			want:   "\n\n*80 tokens | $0.0001*",
 		},
 		{
 			name:   "large numbers",
 			input:  75000,
 			output: 25000,
 			cost:   1.2345,
-			want:   "\n\n<i>100,000 tokens | $1.2345</i>",
+			want:   "\n\n*100,000 tokens | $1.2345*",
 		},
 		{
 			name:   "zero cost",
 			input:  100,
 			output: 50,
 			cost:   0,
-			want:   "\n\n<i>150 tokens | $0.0000</i>",
+			want:   "\n\n*150 tokens | $0.0000*",
 		},
 	}
 
