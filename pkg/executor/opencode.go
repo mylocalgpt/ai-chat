@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -46,6 +47,9 @@ func (a *OpenCodeTmuxAdapter) Name() string {
 
 // Spawn starts OpenCode in a tmux session and creates the response file.
 func (a *OpenCodeTmuxAdapter) Spawn(ctx context.Context, session core.SessionInfo) error {
+	slog.Debug("tmux spawn", "session", session.Name)
+	start := time.Now()
+
 	// Create tmux session.
 	if err := a.tmux.NewSession(session.Name, session.WorkspacePath); err != nil {
 		return fmt.Errorf("opencode spawn: create tmux session: %w", err)
@@ -84,6 +88,7 @@ func (a *OpenCodeTmuxAdapter) Spawn(ctx context.Context, session core.SessionInf
 					_ = a.tmux.KillSession(session.Name)
 					return fmt.Errorf("opencode spawn: create response file: %w", err)
 				}
+				slog.Debug("tmux spawned", "session", session.Name, "duration", time.Since(start))
 				return nil
 			}
 		}
@@ -92,6 +97,9 @@ func (a *OpenCodeTmuxAdapter) Spawn(ctx context.Context, session core.SessionInf
 
 // Send sends a message to OpenCode and writes the response to the file.
 func (a *OpenCodeTmuxAdapter) Send(ctx context.Context, session core.SessionInfo, message string) error {
+	slog.Debug("tmux send", "session", session.Name)
+	start := time.Now()
+
 	// Capture pre-send snapshot.
 	snapshot, err := a.tmux.CapturePaneRaw(session.Name, 200)
 	if err != nil {
@@ -158,6 +166,7 @@ func (a *OpenCodeTmuxAdapter) Send(ctx context.Context, session core.SessionInfo
 	}
 
 done:
+	slog.Debug("tmux sent", "session", session.Name, "duration", time.Since(start))
 	// Append agent response to response file.
 	if response != "" {
 		if err := AppendMessage(session.ResponseFile, ResponseMessage{

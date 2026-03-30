@@ -107,6 +107,7 @@ func (h *ServerHandle) Stop() error {
 	if h.Process == nil {
 		return nil
 	}
+	slog.Info("opencode server stopped", "workspace", h.Workspace)
 
 	// Send SIGINT for graceful shutdown.
 	if err := h.Process.Signal(os.Interrupt); err != nil {
@@ -272,6 +273,7 @@ func (sm *ServerManager) startServer(workspace string) (*ServerHandle, error) {
 	}
 
 	sm.servers[workspace] = handle
+	slog.Info("opencode server started", "workspace", workspace, "port", port, "url", url)
 	return handle, nil
 }
 

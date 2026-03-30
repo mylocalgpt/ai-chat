@@ -339,7 +339,7 @@ func TestConsumeEvents_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		adapter.consumeEvents(ctx, stream, respBody, ch)
+		adapter.consumeEvents(ctx, stream, respBody, "test-session", ch)
 	}()
 
 	// Read the events that arrive before the stream ends.
@@ -379,7 +379,7 @@ func TestConsumeEvents_StopsOnIdle(t *testing.T) {
 	ch := make(chan core.AgentEvent, 64)
 
 	go func() {
-		adapter.consumeEvents(context.Background(), stream, respBody, ch)
+		adapter.consumeEvents(context.Background(), stream, respBody, "test-session", ch)
 	}()
 
 	var events []core.AgentEvent

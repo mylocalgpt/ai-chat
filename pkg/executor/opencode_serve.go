@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -109,6 +110,11 @@ func parseSSEEvent(eventType string, data []byte) (core.AgentEvent, bool) {
 			Delta string `json:"delta"`
 		}
 		if err := json.Unmarshal(data, &d); err != nil {
+			raw := string(data)
+			if len(raw) > 200 {
+				raw = raw[:200]
+			}
+			slog.Warn("sse parse failed", "event_type", eventType, "raw", raw, slog.Any("err", err))
 			return core.AgentEvent{}, false
 		}
 		if d.Field == "text" {
@@ -128,6 +134,11 @@ func parseSSEEvent(eventType string, data []byte) (core.AgentEvent, bool) {
 			Reason   string           `json:"reason"`
 		}
 		if err := json.Unmarshal(data, &p); err != nil {
+			raw := string(data)
+			if len(raw) > 200 {
+				raw = raw[:200]
+			}
+			slog.Warn("sse parse failed", "event_type", eventType, "raw", raw, slog.Any("err", err))
 			return core.AgentEvent{}, false
 		}
 		switch p.Type {
@@ -149,6 +160,11 @@ func parseSSEEvent(eventType string, data []byte) (core.AgentEvent, bool) {
 			Type string `json:"type"`
 		}
 		if err := json.Unmarshal(data, &s); err != nil {
+			raw := string(data)
+			if len(raw) > 200 {
+				raw = raw[:200]
+			}
+			slog.Warn("sse parse failed", "event_type", eventType, "raw", raw, slog.Any("err", err))
 			return core.AgentEvent{}, false
 		}
 		switch s.Type {
@@ -187,7 +203,8 @@ func (h *ServerHandle) CreateSession(ctx context.Context, title string) (string,
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("create session: unexpected status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("create session: unexpected status %d: %s", resp.StatusCode, body)
 	}
 
 	var result struct {
@@ -232,7 +249,8 @@ func (h *ServerHandle) SendPrompt(ctx context.Context, sessionID, message string
 
 	if resp.StatusCode != http.StatusOK {
 		defer func() { _ = resp.Body.Close() }()
-		return nil, fmt.Errorf("send prompt: unexpected status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("send prompt: unexpected status %d: %s", resp.StatusCode, body)
 	}
 
 	return resp.Body, nil
@@ -253,7 +271,8 @@ func (h *ServerHandle) Abort(ctx context.Context, sessionID string) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("abort: unexpected status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("abort: unexpected status %d: %s", resp.StatusCode, body)
 	}
 	return nil
 }
@@ -273,7 +292,8 @@ func (h *ServerHandle) DeleteSession(ctx context.Context, sessionID string) erro
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("delete session: unexpected status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("delete session: unexpected status %d: %s", resp.StatusCode, body)
 	}
 	return nil
 }
@@ -306,6 +326,7 @@ func sessionKey(s core.SessionInfo) string {
 // Spawn ensures the opencode serve server is running and creates a new
 // agent session when AgentSessionID is empty.
 func (a *OpenCodeServeAdapter) Spawn(ctx context.Context, session core.SessionInfo) error {
+	slog.Debug("adapter spawn", "session", session.Name, "workspace", session.WorkspacePath)
 	handle, err := a.serverMgr.GetOrStart(session.WorkspacePath)
 	if err != nil {
 		return fmt.Errorf("opencode serve spawn: %w", err)
@@ -324,6 +345,7 @@ func (a *OpenCodeServeAdapter) Spawn(ctx context.Context, session core.SessionIn
 		}
 		a.sessionIDs.Store(sessionKey(session), id)
 	}
+	slog.Debug("adapter spawned", "session", session.Name, "workspace", session.WorkspacePath)
 	return nil
 }
 
@@ -351,21 +373,23 @@ func (a *OpenCodeServeAdapter) SendStream(ctx context.Context, session core.Sess
 	if err != nil {
 		return nil, fmt.Errorf("opencode serve send stream: subscribe: %w", err)
 	}
+	slog.Debug("sse subscribed", "session", session.Name)
 
 	respBody, err := handle.SendPrompt(ctx, session.AgentSessionID, message)
 	if err != nil {
 		_ = sse.Close()
 		return nil, fmt.Errorf("opencode serve send stream: send prompt: %w", err)
 	}
+	slog.Debug("prompt sent", "session", session.Name)
 
 	ch := make(chan core.AgentEvent, 64)
-	go a.consumeEvents(ctx, sse, respBody, ch)
+	go a.consumeEvents(ctx, sse, respBody, session.Name, ch)
 	return ch, nil
 }
 
 // consumeEvents reads SSE events and forwards parsed AgentEvents to ch.
 // Stops on EventIdle, context cancellation, or stream error.
-func (a *OpenCodeServeAdapter) consumeEvents(ctx context.Context, sse *SSEStream, respBody io.ReadCloser, ch chan<- core.AgentEvent) {
+func (a *OpenCodeServeAdapter) consumeEvents(ctx context.Context, sse *SSEStream, respBody io.ReadCloser, sessionName string, ch chan<- core.AgentEvent) {
 	defer close(ch)
 	defer func() { _ = sse.Close() }()
 	defer func() { _ = respBody.Close() }()
@@ -380,6 +404,7 @@ func (a *OpenCodeServeAdapter) consumeEvents(ctx context.Context, sse *SSEStream
 		eventType, data, err := sse.Next()
 		if err != nil {
 			if err == io.EOF {
+				slog.Debug("sse stream ended", "session", sessionName)
 				return
 			}
 			// Context cancellation surfaces as a read error; don't send
@@ -387,6 +412,7 @@ func (a *OpenCodeServeAdapter) consumeEvents(ctx context.Context, sse *SSEStream
 			if ctx.Err() != nil {
 				return
 			}
+			slog.Warn("sse read error", "session", sessionName, slog.Any("err", err))
 			ch <- core.AgentEvent{Type: core.EventError, Text: err.Error()}
 			return
 		}

@@ -1,8 +1,10 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -33,6 +35,9 @@ func (a *CopilotAdapter) Name() string {
 // Spawn validates copilot is on PATH and creates the response file.
 // Stateless adapter, no persistent process to start.
 func (a *CopilotAdapter) Spawn(_ context.Context, session core.SessionInfo) error {
+	slog.Debug("copilot spawn", "session", session.Name)
+	start := time.Now()
+
 	// Verify copilot is on PATH.
 	if _, err := exec.LookPath("copilot"); err != nil {
 		return fmt.Errorf("copilot not found on PATH: %w", err)
@@ -45,11 +50,15 @@ func (a *CopilotAdapter) Spawn(_ context.Context, session core.SessionInfo) erro
 		return fmt.Errorf("copilot spawn: create response file: %w", err)
 	}
 
+	slog.Debug("copilot spawned", "session", session.Name, "duration", time.Since(start))
 	return nil
 }
 
 // Send runs copilot with the message and writes the response to the file.
 func (a *CopilotAdapter) Send(ctx context.Context, session core.SessionInfo, message string) error {
+	slog.Debug("copilot send", "session", session.Name)
+	start := time.Now()
+
 	// Build command: copilot -p <message> -s --allow-all-tools
 	// -p: non-interactive mode, passes prompt directly
 	// -s: silent mode, outputs only agent response
@@ -60,15 +69,28 @@ func (a *CopilotAdapter) Send(ctx context.Context, session core.SessionInfo, mes
 	cmd := exec.CommandContext(ctx, "copilot", "-p", message, "-s", "--allow-all-tools")
 	cmd.Dir = session.WorkspacePath
 
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
 	output, err := cmd.Output()
 	var sendErr error
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			sendErr = ErrResponseTimeout
 		} else {
-			sendErr = fmt.Errorf("copilot send: %w", err)
+			stderr := stderrBuf.String()
+			if len(stderr) > 512 {
+				stderr = stderr[:512]
+			}
+			if stderr != "" {
+				sendErr = fmt.Errorf("copilot send: %w: %s", err, stderr)
+			} else {
+				sendErr = fmt.Errorf("copilot send: %w", err)
+			}
 		}
 	}
+
+	slog.Debug("copilot sent", "session", session.Name, "duration", time.Since(start))
 
 	// Append agent response to response file.
 	if len(output) > 0 {
