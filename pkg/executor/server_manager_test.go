@@ -15,17 +15,20 @@ func TestAllocatePortReturnsInRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocatePort() error: %v", err)
 	}
-	if port < portRangeStart || port > portRangeEnd {
-		t.Errorf("port %d not in range [%d, %d]", port, portRangeStart, portRangeEnd)
+	if port < sm.portStart || port > sm.portEnd {
+		t.Errorf("port %d not in range [%d, %d]", port, sm.portStart, sm.portEnd)
 	}
 }
 
 func TestAllocatePortExhaustion(t *testing.T) {
 	sm := NewServerManager()
+	// Use an isolated range so the test never conflicts with real services.
+	sm.portStart = 30000
+	sm.portEnd = 30004
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	totalPorts := portRangeEnd - portRangeStart + 1
+	totalPorts := sm.portEnd - sm.portStart + 1
 	for i := 0; i < totalPorts; i++ {
 		_, err := sm.allocatePort()
 		if err != nil {

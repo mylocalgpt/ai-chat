@@ -27,6 +27,8 @@ type ServerManager struct {
 	mu        sync.Mutex
 	servers   map[string]*ServerHandle // workspace path -> handle
 	usedPorts map[int]bool
+	portStart int
+	portEnd   int
 }
 
 // NewServerManager returns an initialized ServerManager.
@@ -34,6 +36,8 @@ func NewServerManager() *ServerManager {
 	return &ServerManager{
 		servers:   make(map[string]*ServerHandle),
 		usedPorts: make(map[int]bool),
+		portStart: portRangeStart,
+		portEnd:   portRangeEnd,
 	}
 }
 
@@ -42,7 +46,7 @@ func NewServerManager() *ServerManager {
 // external processes (e.g. orphaned servers from a previous run).
 // Must be called under sm.mu lock.
 func (sm *ServerManager) allocatePort() (int, error) {
-	for p := portRangeStart; p <= portRangeEnd; p++ {
+	for p := sm.portStart; p <= sm.portEnd; p++ {
 		if sm.usedPorts[p] {
 			continue
 		}
@@ -53,7 +57,7 @@ func (sm *ServerManager) allocatePort() (int, error) {
 		sm.usedPorts[p] = true
 		return p, nil
 	}
-	return 0, fmt.Errorf("all ports exhausted (%d-%d)", portRangeStart, portRangeEnd)
+	return 0, fmt.Errorf("all ports exhausted (%d-%d)", sm.portStart, sm.portEnd)
 }
 
 // isPortFree checks whether a TCP port is available by briefly binding to it.

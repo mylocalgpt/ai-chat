@@ -321,6 +321,12 @@ func (t *TelegramAdapter) SendStreaming(ctx context.Context, chatID int64, reply
 	slog.Debug("streaming started", "req", core.RequestID(ctx), "chat_id", chatID)
 	reporter := NewProgressReporter(t.bot, chatID, replyToID, agentSessionID)
 
+	// Send immediate typing indicator so user sees feedback before the first event arrives.
+	_, _ = t.bot.SendChatAction(ctx, &bot.SendChatActionParams{
+		ChatID: chatID,
+		Action: models.ChatActionTyping,
+	})
+
 	var textBuf strings.Builder
 	var result core.StreamResult
 	started := false
